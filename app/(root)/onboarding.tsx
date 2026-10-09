@@ -1,5 +1,14 @@
+import { ALL_CURRENCIES, CurrencyPicker, type CurrencyOption } from "@/components/CurrencyPicker";
+import { useSupabase } from "@/hooks/useSupabase";
+import { onboardingSchema } from "@/lib/schemas/onboarding";
+import { useUserStore } from "@/store/userStore";
+import { useUser } from "@clerk/expo";
+import { Feather } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useState } from "react";
 import {
+  ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Text,
@@ -7,122 +16,169 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function OnboardingScreen() {
+  const { user } = useUser();
+  const authSupabase = useSupabase();
+  const setCurrency = useUserStore((state) => state.setCurrency);
+  const setNeedsOnboarding = useUserStore((state) => state.setNeedsOnboarding);
   const [startingBalance, setStartingBalance] = useState("");
-  const [currency, setCurrency] = useState("USD");
+  const [selectedCurrency, setSelectedCurrency] = useState<CurrencyOption>(
+    ALL_CURRENCIES.find((currency) => currency.code === "INR") ?? ALL_CURRENCIES[0]
+  );
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [balanceError, setBalanceError] = useState("");
 
-  const handleSave = () => {
-    console.log("Starting balance:", startingBalance);
-    console.log("Currency:", currency);
+  const handleSave = async () => {
+    const parsedForm = onboardingSchema.safeParse({ startingBalance });
+    if (!parsedForm.success) {
+      setBalanceError(parsedForm.error.issues[0]?.message ?? "Enter a valid amount.");
+      return;
+    }
+
+    if (!user) {
+      setError("Your account is still loading. Please try again.");
+      return;
+    }
+
+    const parsedBalance = Number(parsedForm.data.startingBalance.replace(/,/g, ""));
+    setSaving(true);
+    setError("");
+    setBalanceError("");
+
+    try {
+      const { error: updateError } = await authSupabase
+        .from("users")
+        .update({ currency: selectedCurrency.code })
+        .eq("clerk_id", user.id);
+
+      if (updateError) throw updateError;
+
+      const { data: defaultAccount, error: accountFetchError } = await authSupabase
+        .from("accounts")
+        .select("id, balance")
+        .eq("user_id", user.id)
+        .eq("is_default", true)
+        .single();
+
+      if (accountFetchError || !defaultAccount) throw accountFetchError;
+
+      const { error: transactionError } = await authSupabase
+        .from("transactions")
+        .insert({
+          user_id: user.id,
+          account_id: defaultAccount.id,
+          type: "INCOME",
+          amount: parsedBalance,
+          category: "other_income",
+          description: "Starting balance",
+          date: new Date().toISOString(),
+          input_method: "MANUAL",
+        });
+
+      if (transactionError) throw transactionError;
+
+      const { error: balanceError } = await authSupabase
+        .from("accounts")
+        .update({ balance: defaultAccount.balance + parsedBalance })
+        .eq("id", defaultAccount.id);
+
+      if (balanceError) throw balanceError;
+
+      setCurrency(selectedCurrency.code);
+      setNeedsOnboarding(false);
+      router.replace("/(root)/(tabs)");
+    } catch (saveError) {
+      console.error("Onboarding save failed:", saveError);
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      style={{ flex: 1 }}
-    >
-      <View
-        style={{
-          flex: 1,
-          justifyContent: "center",
-          paddingHorizontal: 24,
-        }}
+    <SafeAreaView className="flex-1 bg-brand-body" edges={["top"]}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        className="flex-1"
       >
-        <Text
-          style={{
-            fontSize: 30,
-            fontWeight: "700",
-            marginBottom: 8,
-          }}
-        >
-          Let's get you set up
-        </Text>
+        <View className="flex-1 justify-center px-6">
+          <View className="mb-10 flex-row items-center">
+            <View className="mr-3 h-12 w-12 items-center justify-center rounded-2xl bg-brand-bg">
+              <Text className="text-2xl font-extrabold text-white">W</Text>
+            </View>
+            <Text className="text-xl font-bold text-brand-bg">Welth</Text>
+          </View>
 
-        <Text
-          style={{
-            fontSize: 14,
-            color: "#8A8D96",
-            marginBottom: 40,
-          }}
-        >
-          A couple of quick details to personalise your experience.
-        </Text>
-
-        <Text
-          style={{
-            fontSize: 12,
-            fontWeight: "500",
-            marginBottom: 6,
-          }}
-        >
-          Starting balance
-        </Text>
-
-        <TextInput
-          value={startingBalance}
-          onChangeText={setStartingBalance}
-          placeholder="e.g. 50000"
-          placeholderTextColor="#8A8D96"
-          keyboardType="numeric"
-          style={{
-            backgroundColor: "#FFFFFF",
-            borderWidth: 1,
-            borderColor: "#E8E6DF",
-            borderRadius: 12,
-            paddingHorizontal: 16,
-            paddingVertical: 14,
-            marginBottom: 24,
-          }}
-        />
-
-        <Text
-          style={{
-            fontSize: 12,
-            fontWeight: "500",
-            marginBottom: 6,
-          }}
-        >
-          Currency
-        </Text>
-
-        <TextInput
-          value={currency}
-          onChangeText={setCurrency}
-          placeholder="USD"
-          placeholderTextColor="#8A8D96"
-          autoCapitalize="characters"
-          style={{
-            backgroundColor: "#FFFFFF",
-            borderWidth: 1,
-            borderColor: "#E8E6DF",
-            borderRadius: 12,
-            paddingHorizontal: 16,
-            paddingVertical: 14,
-            marginBottom: 24,
-          }}
-        />
-
-        <TouchableOpacity
-          onPress={handleSave}
-          style={{
-            backgroundColor: "#1A1D26",
-            borderRadius: 12,
-            paddingVertical: 16,
-            alignItems: "center",
-          }}
-        >
-          <Text
-            style={{
-              color: "#FFFFFF",
-              fontSize: 14,
-              fontWeight: "600",
-            }}
-          >
-            Get started
+          <Text className="mb-2 text-3xl font-bold text-[#1A1D26]">
+            Let&apos;s get you set up
           </Text>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+          <Text className="mb-10 text-sm text-brand-text-muted">
+            A couple of quick details to personalise your experience.
+          </Text>
+
+          <Text className="mb-1.5 text-xs font-medium text-brand-bg">Starting balance</Text>
+          <View className="mb-1 flex-row items-center rounded-xl border border-[#E8E6DF] bg-white px-4">
+            <Text className="mr-2 text-sm text-brand-text-secondary">{selectedCurrency.symbol}</Text>
+            <TextInput
+              value={startingBalance}
+              onChangeText={(value) => {
+                setStartingBalance(value);
+                setBalanceError("");
+                setError("");
+              }}
+              placeholder="e.g. 50000"
+              placeholderTextColor="#8A8D96"
+              keyboardType="decimal-pad"
+              returnKeyType="done"
+              className="flex-1 py-3.5 text-sm text-brand-bg"
+              accessibilityLabel="Starting balance"
+            />
+          </View>
+          {balanceError ? <Text className="mb-3 text-xs text-brand-coral">{balanceError}</Text> : <View className="mb-4" />}
+
+          <Text className="mb-1.5 text-xs font-medium text-brand-bg">Currency</Text>
+          <TouchableOpacity
+            onPress={() => setPickerOpen(true)}
+            className="mb-6 flex-row items-center justify-between rounded-xl border border-[#E8E6DF] bg-white px-4 py-3.5"
+            accessibilityRole="button"
+          >
+            <Text className="text-sm text-brand-bg">
+              {selectedCurrency.symbol} {selectedCurrency.code} — {selectedCurrency.name}
+            </Text>
+            <Feather name="chevron-down" size={16} color="#8A8D96" />
+          </TouchableOpacity>
+
+          {error ? <Text className="mb-4 text-xs text-brand-coral">{error}</Text> : null}
+
+          <TouchableOpacity
+            onPress={handleSave}
+            disabled={saving}
+            className="items-center rounded-xl bg-brand-bg py-4"
+            activeOpacity={0.85}
+            accessibilityRole="button"
+          >
+            {saving ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text className="text-sm font-semibold text-white">Get started</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+
+      <CurrencyPicker
+        visible={pickerOpen}
+        selectedCode={selectedCurrency.code}
+        onSelect={(currency) => {
+          setSelectedCurrency(currency);
+          setPickerOpen(false);
+        }}
+        onClose={() => setPickerOpen(false)}
+      />
+    </SafeAreaView>
   );
 }
