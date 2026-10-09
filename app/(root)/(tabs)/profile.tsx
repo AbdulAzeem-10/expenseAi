@@ -1,8 +1,14 @@
 import { useState } from "react";
+import { useClerk } from "@clerk/expo";
+import { useQueryClient } from "@tanstack/react-query";
+import { useFinanceData } from "@/hooks/useFinanceData";
+import { useUserStore } from "@/store/userStore";
+import { queryKeys } from "@/lib/query/keys";
+import { createAccount, setDefaultAccount } from "@/lib/services/accounts";
+import { ALL_CURRENCIES, CurrencyPicker } from "@/components/CurrencyPicker";
 import {
   ActivityIndicator,
   Alert,
-  Image,
   ScrollView,
   Switch,
   Text,
@@ -126,19 +132,21 @@ function Row({
 }
 
 export default function ProfileScreen() {
-  const [accounts, setAccounts] = useState<Account[]>(
-    INITIAL_ACCOUNTS
-  );
-
-  const [currency, setCurrency] = useState("USD");
+  const { user, supabase, accounts: accountsQuery } = useFinanceData();
+  const queryClient = useQueryClient();
+  const { signOut } = useClerk();
+  const currency = useUserStore((state) => state.currency);
+  const setCurrency = useUserStore((state) => state.setCurrency);
   const [biometricLock, setBiometricLock] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
-
-  const user = {
-    firstName: "Abdul",
-    lastName: "Azeem",
-    email: "user@example.com",
-  };
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const accounts: Account[] = (accountsQuery.data ?? []).map((account) => ({
+    id: account.id,
+    name: account.name,
+    type: account.type,
+    balance: Number(account.balance),
+    isDefault: account.is_default,
+  }));
 
   const formatPrice = (amount: number) => {
     return `${currency} ${amount.toLocaleString()}`;
@@ -158,89 +166,38 @@ export default function ProfileScreen() {
   };
 
   const handleSignOut = () => {
-    Alert.alert(
-      "Sign out",
-      "Are you sure you want to sign out?",
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-        {
-          text: "Sign out",
-          style: "destructive",
-          onPress: () => {
-            Alert.alert("Signed out");
-          },
-        },
-      ]
-    );
+    Alert.alert("Sign out", "Are you sure you want to sign out?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Sign out", style: "destructive", onPress: () => { void signOut(); } },
+    ]);
   };
 
   const handleAccount = (account: Account) => {
-    Alert.alert(
-      account.name,
-      `Balance: ${formatPrice(account.balance)}`,
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
+    Alert.alert(account.name, "Balance: " + formatPrice(account.balance), [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Make Default",
+        onPress: () => {
+          if (!user) return;
+          void setDefaultAccount(supabase, user.id, account.id)
+            .then(() => queryClient.invalidateQueries({ queryKey: queryKeys.accounts(user.id) }))
+            .catch((error) => Alert.alert("Update failed", error instanceof Error ? error.message : "Please try again."));
         },
-        {
-          text: "Make Default",
-          onPress: () => {
-            setAccounts((current) =>
-              current.map((item) => ({
-                ...item,
-                isDefault: item.id === account.id,
-              }))
-            );
-          },
-        },
-      ]
-    );
+      },
+    ]);
   };
 
   const handleAddAccount = () => {
-    const newAccount: Account = {
-      id: Date.now().toString(),
-      name: `Account ${accounts.length + 1}`,
+    if (!user) return;
+    void createAccount(supabase, user.id, {
+      name: "Account " + (accounts.length + 1),
       type: "CASH",
-      balance: 0,
-      isDefault: false,
-    };
-
-    setAccounts((current) => [...current, newAccount]);
+    })
+      .then(() => queryClient.invalidateQueries({ queryKey: queryKeys.accounts(user.id) }))
+      .catch((error) => Alert.alert("Create account failed", error instanceof Error ? error.message : "Please try again."));
   };
 
-  const handleCurrency = () => {
-    Alert.alert(
-      "Currency",
-      "Select your preferred currency",
-      [
-        {
-          text: "USD",
-          onPress: () => setCurrency("USD"),
-        },
-        {
-          text: "EUR",
-          onPress: () => setCurrency("EUR"),
-        },
-        {
-          text: "GBP",
-          onPress: () => setCurrency("GBP"),
-        },
-        {
-          text: "PKR",
-          onPress: () => setCurrency("PKR"),
-        },
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-      ]
-    );
-  };
+  const handleCurrency = () => setPickerOpen(true);
 
   const getAccountIcon = (type: Account["type"]) => {
     switch (type) {
@@ -331,7 +288,7 @@ export default function ProfileScreen() {
               marginTop: 14,
             }}
           >
-            {user.firstName} {user.lastName}
+            {user?.firstName ?? ""} {user?.lastName ?? ""}
           </Text>
 
           <Text
@@ -341,7 +298,7 @@ export default function ProfileScreen() {
               marginTop: 5,
             }}
           >
-            ✉ {user.email}
+            ✉ {user?.primaryEmailAddress?.emailAddress ?? ""}
           </Text>
         </View>
 
@@ -460,6 +417,24 @@ export default function ProfileScreen() {
           />
         </View>
       </ScrollView>
+      <CurrencyPicker
+        visible={pickerOpen}
+        selectedCode={currency}
+        onSelect={(selected) => {
+          setPickerOpen(false);
+          if (!user) return;
+          void (async () => {
+            try {
+              const { error } = await supabase.from("users").update({ currency: selected.code }).eq("clerk_id", user.id);
+              if (error) throw error;
+              setCurrency(selected.code);
+            } catch (error) {
+              Alert.alert("Currency update failed", error instanceof Error ? error.message : "Please try again.");
+            }
+          })();
+        }}
+        onClose={() => setPickerOpen(false)}
+      />
     </View>
   );
 }

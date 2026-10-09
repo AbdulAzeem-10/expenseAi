@@ -1,3 +1,14 @@
+import { BudgetModal } from "@/components/BudgetModal";
+import { TransactionRow } from "@/components/TransactionRow";
+import { getCategoryConfig } from "@/constants/categories";
+import { useFinanceData } from "@/hooks/useFinanceData";
+import type { Transaction } from "@/lib/services/transactions";
+import { formatPrice } from "@/lib/utils";
+import { useUserStore } from "@/store/userStore";
+import { Feather } from "@expo/vector-icons";
+import { isSameMonth } from "date-fns";
+import { Image } from "expo-image";
+import { useRouter } from "expo-router";
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -7,810 +18,289 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-
-type Transaction = {
-  id: string;
-  description: string;
-  category: string;
-  type: "INCOME" | "EXPENSE";
-  amount: number;
-  date: string;
-};
-
-type Account = {
-  id: string;
-  name: string;
-  balance: number;
-};
-
-type Budget = {
-  amount: number;
-};
-
-const SAMPLE_ACCOUNTS: Account[] = [
-  {
-    id: "1",
-    name: "Cash",
-    balance: 25000,
-  },
-  {
-    id: "2",
-    name: "Bank",
-    balance: 75000,
-  },
-];
-
-const SAMPLE_TRANSACTIONS: Transaction[] = [
-  {
-    id: "1",
-    description: "Salary",
-    category: "Income",
-    type: "INCOME",
-    amount: 50000,
-    date: "2026-08-01",
-  },
-  {
-    id: "2",
-    description: "Groceries",
-    category: "Food",
-    type: "EXPENSE",
-    amount: 4500,
-    date: "2026-08-05",
-  },
-  {
-    id: "3",
-    description: "Electricity Bill",
-    category: "Bills",
-    type: "EXPENSE",
-    amount: 3200,
-    date: "2026-08-08",
-  },
-  {
-    id: "4",
-    description: "Restaurant",
-    category: "Food",
-    type: "EXPENSE",
-    amount: 1800,
-    date: "2026-08-12",
-  },
-  {
-    id: "5",
-    description: "Freelance",
-    category: "Income",
-    type: "INCOME",
-    amount: 15000,
-    date: "2026-08-14",
-  },
-];
-
-const SAMPLE_BUDGET: Budget = {
-  amount: 30000,
-};
-
-const CATEGORY_COLORS: Record<string, string> = {
-  Food: "#FF6B4A",
-  Bills: "#4A9EFF",
-  Transport: "#F7DC6F",
-  Shopping: "#9B59B6",
-  Entertainment: "#3DDC84",
-  Other: "#8A8D96",
-};
-
-const QUICK_ACTIONS = [
-  {
-    symbol: "📷",
-    label: "AI Receipt Scan",
-    color: "#1A85FF",
-  },
-  {
-    symbol: "🎤",
-    label: "Voice Entry",
-    color: "#FF6B4A",
-  },
-  {
-    symbol: "+",
-    label: "Add Manually",
-    color: "#3DDC84",
-  },
-];
+import { PieChart } from "react-native-gifted-charts";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 function getGreeting() {
   const hour = new Date().getHours();
-
-  if (hour < 12) {
-    return "Good morning";
-  }
-
-  if (hour < 18) {
-    return "Good afternoon";
-  }
-
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
   return "Good evening";
 }
 
-function formatPrice(amount: number, currency: string) {
-  return `${currency} ${amount.toLocaleString()}`;
-}
-
-function TransactionRow({
-  transaction,
-}: {
-  transaction: Transaction;
-}) {
-  const isIncome = transaction.type === "INCOME";
-
-  return (
-    <View
-      style={{
-        backgroundColor: "#FFFFFF",
-        borderWidth: 1,
-        borderColor: "#E8E6DF",
-        borderRadius: 14,
-        padding: 14,
-        marginBottom: 8,
-        flexDirection: "row",
-        alignItems: "center",
-      }}
-    >
-      <View
-        style={{
-          width: 40,
-          height: 40,
-          borderRadius: 20,
-          backgroundColor: isIncome ? "#E9F9F0" : "#FFF0EC",
-          alignItems: "center",
-          justifyContent: "center",
-          marginRight: 12,
-        }}
-      >
-        <Text style={{ fontSize: 18 }}>
-          {isIncome ? "↑" : "↓"}
-        </Text>
-      </View>
-
-      <View style={{ flex: 1 }}>
-        <Text
-          style={{
-            fontSize: 13,
-            fontWeight: "600",
-            color: "#1A1D26",
-          }}
-        >
-          {transaction.description}
-        </Text>
-
-        <Text
-          style={{
-            fontSize: 11,
-            color: "#8A8D96",
-            marginTop: 3,
-          }}
-        >
-          {transaction.category}
-        </Text>
-      </View>
-
-      <Text
-        style={{
-          fontSize: 13,
-          fontWeight: "600",
-          color: isIncome ? "#3DDC84" : "#FF6B4A",
-        }}
-      >
-        {isIncome ? "+" : "-"}
-        {transaction.amount.toLocaleString()}
-      </Text>
-    </View>
-  );
-}
+const QUICK_ACTIONS = [
+  { icon: "camera", label: "AI Receipt Scan", action: "scan", color: "#1A85FF" },
+  { icon: "mic", label: "Voice Entry", action: "voice", color: "#FF6B4A" },
+  { icon: "plus", label: "Add Manually", action: "manual", color: "#3DDC84" },
+] as const;
 
 export default function HomeScreen() {
-  const [refreshing, setRefreshing] = useState(false);
+  const router = useRouter();
+  const { user, accounts: accountsQuery, transactions: transactionsQuery, budget: budgetQuery } = useFinanceData();
+  const currency = useUserStore((state) => state.currency);
+  const [budgetModalOpen, setBudgetModalOpen] = useState(false);
 
-  const accounts = SAMPLE_ACCOUNTS;
-  const transactions = SAMPLE_TRANSACTIONS;
-  const budget = SAMPLE_BUDGET;
+  const accounts = accountsQuery.data ?? [];
+  const transactions = transactionsQuery.data ?? [];
+  const budget = budgetQuery.data ?? null;
+  const loading = accountsQuery.isLoading || transactionsQuery.isLoading;
+  const refreshing = accountsQuery.isRefetching || transactionsQuery.isRefetching || budgetQuery.isRefetching;
 
-  const currency = "USD";
-
-  const user = {
-    firstName: "Abdul",
+  const onRefresh = () => {
+    void Promise.all([
+      accountsQuery.refetch(),
+      transactionsQuery.refetch(),
+      budgetQuery.refetch(),
+    ]);
   };
 
-  const loading = false;
+  const totalBalance = useMemo(
+    () => accounts.reduce((sum, account) => sum + Number(account.balance), 0),
+    [accounts]
+  );
 
-  const totalBalance = useMemo(() => {
-    return accounts.reduce(
-      (sum, account) => sum + account.balance,
-      0
-    );
-  }, [accounts]);
+  const monthTransactions = useMemo(() => {
+    const now = new Date();
+    return transactions.filter((tx) => isSameMonth(new Date(tx.date), now));
+  }, [transactions]);
 
-  const monthIncome = useMemo(() => {
-    return transactions
+  const monthIncome = useMemo(
+    () => monthTransactions
       .filter((tx) => tx.type === "INCOME")
-      .reduce((sum, tx) => sum + tx.amount, 0);
-  }, [transactions]);
+      .reduce((sum, tx) => sum + Number(tx.amount), 0),
+    [monthTransactions]
+  );
 
-  const monthExpense = useMemo(() => {
-    return transactions
+  const monthExpense = useMemo(
+    () => monthTransactions
       .filter((tx) => tx.type === "EXPENSE")
-      .reduce((sum, tx) => sum + tx.amount, 0);
-  }, [transactions]);
+      .reduce((sum, tx) => sum + Number(tx.amount), 0),
+    [monthTransactions]
+  );
 
-  const recentTransactions = useMemo(() => {
-    return transactions.slice(0, 5);
-  }, [transactions]);
+  const recentTransactions = useMemo(() => transactions.slice(0, 5), [transactions]);
 
   const expenseBreakdown = useMemo(() => {
-    const breakdown: Record<string, number> = {};
-
-    transactions
+    const totals: Partial<Record<Transaction["category"], number>> = {};
+    monthTransactions
       .filter((tx) => tx.type === "EXPENSE")
       .forEach((tx) => {
-        breakdown[tx.category] =
-          (breakdown[tx.category] || 0) + tx.amount;
+        totals[tx.category] = (totals[tx.category] ?? 0) + Number(tx.amount);
       });
 
-    return Object.entries(breakdown)
+    return Object.entries(totals)
+      .filter((entry): entry is [Transaction["category"], number] => entry[1] !== undefined)
       .sort((a, b) => b[1] - a[1])
       .map(([category, amount]) => ({
         category,
         amount,
-        color: CATEGORY_COLORS[category] || "#8A8D96",
+        color: getCategoryConfig(category).color,
       }));
-  }, [transactions]);
+  }, [monthTransactions]);
 
-  const budgetPercentage =
-    budget.amount > 0
-      ? Math.min(
-          Math.round((monthExpense / budget.amount) * 100),
-          100
-        )
-      : 0;
+  const budgetPercentage = budget && budget.amount > 0
+    ? Math.min(Math.round((monthExpense / budget.amount) * 100), 100)
+    : 0;
 
-  const onRefresh = () => {
-    setRefreshing(true);
-
-    setTimeout(() => {
-      setRefreshing(false);
-    }, 1000);
-  };
-
-  const handleQuickAction = (label: string) => {
-    console.log(`${label} pressed`);
+  const handleQuickAction = (action: (typeof QUICK_ACTIONS)[number]["action"]) => {
+    if (action === "voice") {
+      router.push("/(root)/(tabs)/assistant");
+      return;
+    }
+    // Receipt scanning is not implemented yet, so both remaining actions open
+    // the existing transaction form.
+    router.push("/(root)/(tabs)/add-transaction");
   };
 
   return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: "#F7F6F0",
-      }}
-    >
+    <SafeAreaView className="flex-1 bg-brand-bg" edges={["top"]}>
       <ScrollView
+        className="flex-1 bg-brand-body"
         showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-          />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {/* Hero Header */}
+        <View className="rounded-b-[28px] bg-brand-bg px-5 pb-[22px] pt-5">
+          <View className="mb-[22px] flex-row items-center justify-between">
+            <View className="flex-row items-center gap-2">
+              <View className="h-9 w-9 items-center justify-center rounded-xl bg-white">
+                <Text className="text-lg font-extrabold text-brand-bg">W</Text>
+              </View>
+              <Text className="text-base font-bold tracking-widest text-brand-text-primary">WELTH</Text>
+            </View>
 
-        <View
-          style={{
-            backgroundColor: "#1A1D26",
-            borderBottomLeftRadius: 28,
-            borderBottomRightRadius: 28,
-            paddingHorizontal: 20,
-            paddingTop: 24,
-            paddingBottom: 22,
-          }}
-        >
-          {/* Header */}
-
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: 24,
-            }}
-          >
-            <Text
-              style={{
-                color: "#FFFFFF",
-                fontSize: 20,
-                fontWeight: "700",
-              }}
-            >
-              WELTH
-            </Text>
-
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-              }}
-            >
-              <View
-                style={{
-                  alignItems: "flex-end",
-                  marginRight: 10,
-                }}
-              >
-                <Text
-                  style={{
-                    color: "#8A8D96",
-                    fontSize: 11,
-                  }}
-                >
-                  {getGreeting()}
-                </Text>
-
-                <Text
-                  style={{
-                    color: "#FFFFFF",
-                    fontSize: 15,
-                    fontWeight: "500",
-                  }}
-                >
-                  {user.firstName}
+            <View className="flex-row items-center gap-2.5">
+              <View className="items-end">
+                <Text className="text-xs text-brand-text-secondary">{getGreeting()}</Text>
+                <Text className="text-base font-medium text-brand-text-primary">
+                  {user?.firstName ?? "there"}
                 </Text>
               </View>
-
-              <View
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  backgroundColor: "#2A2E3A",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
+              <TouchableOpacity
+                onPress={() => router.push("/(root)/(tabs)/profile")}
+                className="h-[38px] w-[38px] items-center justify-center overflow-hidden rounded-full bg-[#1A1D26]"
+                accessibilityRole="button"
+                accessibilityLabel="Open profile"
               >
-                <Text style={{ fontSize: 18 }}>👤</Text>
-              </View>
+                {user?.imageUrl && user.hasImage ? (
+                  <Image source={{ uri: user.imageUrl }} style={{ width: 38, height: 38 }} contentFit="cover" />
+                ) : (
+                  <Feather name="user" size={18} color="#8A8D96" />
+                )}
+              </TouchableOpacity>
             </View>
           </View>
 
-          {/* Balance */}
-
-          <View style={{ marginBottom: 22 }}>
-            <Text
-              style={{
-                color: "#8A8D96",
-                fontSize: 12,
-                marginBottom: 6,
-              }}
-            >
-              Total balance
-            </Text>
-
-            <Text
-              style={{
-                color: "#FFFFFF",
-                fontSize: 38,
-                fontWeight: "500",
-              }}
-            >
+          <View className="mb-[22px]">
+            <Text className="mb-1.5 text-xs text-brand-text-secondary">Total balance</Text>
+            <Text className="text-[38px] font-medium tracking-tight text-brand-text-primary">
               {formatPrice(totalBalance, currency)}
             </Text>
-
-            <View
-              style={{
-                flexDirection: "row",
-                marginTop: 10,
-                gap: 18,
-              }}
-            >
-              <Text
-                style={{
-                  color: "#3DDC84",
-                  fontSize: 13,
-                }}
-              >
-                ↑ {formatPrice(monthIncome, currency)}
-              </Text>
-
-              <Text
-                style={{
-                  color: "#FF6B4A",
-                  fontSize: 13,
-                }}
-              >
-                ↓ {formatPrice(monthExpense, currency)}
-              </Text>
+            <View className="mt-2.5 flex-row gap-3.5">
+              <View className="flex-row items-center gap-1.5">
+                <Feather name="arrow-up-right" size={14} color="#3DDC84" />
+                <Text className="text-[13px] text-brand-success">{formatPrice(monthIncome, currency)}</Text>
+              </View>
+              <View className="flex-row items-center gap-1.5">
+                <Feather name="arrow-down-right" size={14} color="#FF6B4A" />
+                <Text className="text-[13px] text-brand-coral">{formatPrice(monthExpense, currency)}</Text>
+              </View>
             </View>
           </View>
 
-          {/* Quick Actions */}
-
-          <View
-            style={{
-              flexDirection: "row",
-              gap: 10,
-            }}
-          >
+          <View className="flex-row gap-2.5">
             {QUICK_ACTIONS.map((action) => (
               <TouchableOpacity
-                key={action.label}
-                onPress={() => handleQuickAction(action.label)}
+                key={action.action}
+                onPress={() => handleQuickAction(action.action)}
                 activeOpacity={0.75}
-                style={{
-                  flex: 1,
-                  backgroundColor: "#242832",
-                  borderWidth: 1,
-                  borderColor: "#353945",
-                  borderRadius: 16,
-                  paddingVertical: 15,
-                  alignItems: "center",
-                }}
+                className="flex-1 items-center gap-2 rounded-2xl border border-brand-surface-border bg-brand-surface py-4"
               >
                 <View
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 18,
-                    backgroundColor: `${action.color}26`,
-                    alignItems: "center",
-                    justifyContent: "center",
-                    marginBottom: 8,
-                  }}
+                  className="h-9 w-9 items-center justify-center rounded-full"
+                  style={{ backgroundColor: action.color + "26" }}
                 >
-                  <Text
-                    style={{
-                      fontSize: 17,
-                      color: action.color,
-                    }}
-                  >
-                    {action.symbol}
-                  </Text>
+                  <Feather name={action.icon} size={17} color={action.color} />
                 </View>
-
-                <Text
-                  style={{
-                    color: "#B8BAC2",
-                    fontSize: 10,
-                    fontWeight: "500",
-                    textAlign: "center",
-                  }}
-                >
-                  {action.label}
-                </Text>
+                <Text className="text-center text-[11px] font-medium text-[#B8BAC2]">{action.label}</Text>
               </TouchableOpacity>
             ))}
           </View>
         </View>
 
-        {/* Body */}
-
-        <View
-          style={{
-            paddingHorizontal: 20,
-            paddingTop: 18,
-            paddingBottom: 30,
-          }}
-        >
-          {/* AI Assistant */}
-
+        <View className="px-5 pb-8 pt-[18px]">
           <TouchableOpacity
-            onPress={() =>
-              console.log("AI Assistant pressed")
-            }
-            style={{
-              backgroundColor: "#FFFFFF",
-              borderWidth: 1,
-              borderColor: "#E8E6DF",
-              borderRadius: 18,
-              padding: 14,
-              flexDirection: "row",
-              alignItems: "center",
-              marginBottom: 18,
-            }}
+            onPress={() => router.push("/(root)/(tabs)/assistant")}
+            className="mb-[18px] flex-row items-center gap-2.5 rounded-[18px] border border-[#E8E6DF] bg-white p-3.5"
+            accessibilityRole="button"
           >
-            <View
-              style={{
-                width: 26,
-                height: 26,
-                borderRadius: 13,
-                backgroundColor: "#EAF4FF",
-                alignItems: "center",
-                justifyContent: "center",
-                marginRight: 10,
-              }}
-            >
-              <View
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: 4,
-                  backgroundColor: "#4A9EFF",
-                }}
-              />
+            <View className="h-[26px] w-[26px] items-center justify-center rounded-full bg-[#4A9EFF1A]">
+              <View className="h-[7px] w-[7px] rounded-full bg-brand-blue" />
             </View>
-
-            <Text
-              style={{
-                color: "#8A8D96",
-                fontSize: 13,
-                flex: 1,
-              }}
-            >
-              Ask AI anything about your money
-            </Text>
-
-            <Text
-              style={{
-                color: "#4A9EFF",
-                fontSize: 20,
-              }}
-            >
-              →
-            </Text>
+            <Text className="flex-1 text-[13px] text-brand-text-muted">Ask AI anything about your money</Text>
+            <Feather name="arrow-right" size={16} color="#4A9EFF" />
           </TouchableOpacity>
 
-          {/* Budget */}
-
           <TouchableOpacity
-            onPress={() =>
-              console.log("Budget modal would open")
-            }
+            onPress={() => setBudgetModalOpen(true)}
             activeOpacity={0.85}
-            style={{
-              backgroundColor: "#FFFFFF",
-              borderWidth: 1,
-              borderColor: "#E8E6DF",
-              borderRadius: 18,
-              padding: 16,
-              marginBottom: 18,
-            }}
+            className="mb-[18px] rounded-[18px] border border-[#E8E6DF] bg-white p-4"
           >
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 10,
-              }}
-            >
-              <Text
-                style={{
-                  color: "#1A1D26",
-                  fontSize: 14,
-                  fontWeight: "500",
-                }}
-              >
-                Monthly budget
-              </Text>
-
-              <Text style={{ color: "#8A8D96" }}>✎</Text>
+            <View className="mb-2.5 flex-row items-center justify-between">
+              <Text className="text-sm font-medium text-[#1A1D26]">Monthly budget</Text>
+              <Feather name="edit-2" size={13} color="#8A8D96" />
             </View>
-
-            <Text
-              style={{
-                color: "#5C5F68",
-                fontSize: 12,
-                marginBottom: 8,
-              }}
-            >
-              {formatPrice(monthExpense, currency)} of{" "}
-              {formatPrice(budget.amount, currency)} spent
-            </Text>
-
-            <View
-              style={{
-                height: 8,
-                borderRadius: 4,
-                backgroundColor: "#F0EEE7",
-                overflow: "hidden",
-              }}
-            >
-              <View
-                style={{
-                  height: 8,
-                  borderRadius: 4,
-                  width: `${budgetPercentage}%`,
-                  backgroundColor:
-                    monthExpense >= budget.amount
-                      ? "#FF6B4A"
-                      : monthExpense >= budget.amount * 0.8
-                      ? "#F7DC6F"
-                      : "#3DDC84",
-                }}
-              />
-            </View>
-
-            <Text
-              style={{
-                color: "#8A8D96",
-                fontSize: 11,
-                marginTop: 7,
-              }}
-            >
-              {budgetPercentage}% used
-            </Text>
+            {budget ? (
+              <>
+                <Text className="mb-2 text-xs text-brand-text-secondary">
+                  {formatPrice(monthExpense, currency)} of {formatPrice(Number(budget.amount), currency)} spent
+                </Text>
+                <View className="h-2 overflow-hidden rounded-full bg-[#F0EEE7]">
+                  <View
+                    className="h-2 rounded-full"
+                    style={{
+                      width: `${budgetPercentage}%` as `${number}%`,
+                      backgroundColor: monthExpense >= budget.amount
+                        ? "#FF6B4A"
+                        : monthExpense >= budget.amount * 0.8
+                          ? "#F7DC6F"
+                          : "#3DDC84",
+                    }}
+                  />
+                </View>
+              </>
+            ) : (
+              <Text className="text-xs text-brand-text-secondary">Tap to set a monthly spending budget</Text>
+            )}
           </TouchableOpacity>
 
-          {/* Expense Breakdown */}
-
-          {expenseBreakdown.length > 0 && (
-            <View
-              style={{
-                backgroundColor: "#FFFFFF",
-                borderWidth: 1,
-                borderColor: "#E8E6DF",
-                borderRadius: 18,
-                padding: 16,
-                marginBottom: 18,
-              }}
-            >
-              <Text
-                style={{
-                  color: "#1A1D26",
-                  fontSize: 14,
-                  fontWeight: "500",
-                  marginBottom: 14,
-                }}
-              >
-                Expense breakdown
-              </Text>
-
-              {expenseBreakdown.map((item) => (
-                <View
-                  key={item.category}
-                  style={{
-                    marginBottom: 10,
-                  }}
-                >
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      justifyContent: "space-between",
-                      marginBottom: 4,
-                    }}
-                  >
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                      }}
-                    >
-                      <View
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: 4,
-                          backgroundColor: item.color,
-                          marginRight: 7,
-                        }}
-                      />
-
-                      <Text
-                        style={{
-                          color: "#5C5F68",
-                          fontSize: 11,
-                        }}
-                      >
-                        {item.category}
+          <View className="mb-[18px] rounded-[18px] border border-[#E8E6DF] bg-white p-4">
+            <Text className="mb-3 text-sm font-medium text-[#1A1D26]">Expense breakdown (this month)</Text>
+            {transactionsQuery.isLoading ? (
+              <View className="min-h-[120px] items-center justify-center">
+                <ActivityIndicator color="#4A9EFF" />
+              </View>
+            ) : expenseBreakdown.length > 0 ? (
+              <View className="flex-row items-center">
+                <PieChart
+                  data={expenseBreakdown.map((category) => ({
+                    value: category.amount,
+                    color: category.color,
+                  }))}
+                  radius={60}
+                />
+                <View className="ml-4 flex-1 gap-1.5">
+                  {expenseBreakdown.slice(0, 6).map((category) => (
+                    <View key={category.category} className="flex-row items-center justify-between">
+                      <View className="flex-row items-center gap-1.5">
+                        <View className="h-2 w-2 rounded-full" style={{ backgroundColor: category.color }} />
+                        <Text className="text-[11px] text-brand-text-secondary" numberOfLines={1}>
+                          {getCategoryConfig(category.category).label}
+                        </Text>
+                      </View>
+                      <Text className="ml-1 text-[11px] font-medium text-brand-bg">
+                        {formatPrice(category.amount, currency)}
                       </Text>
                     </View>
-
-                    <Text
-                      style={{
-                        color: "#1A1D26",
-                        fontSize: 11,
-                        fontWeight: "500",
-                      }}
-                    >
-                      {formatPrice(item.amount, currency)}
-                    </Text>
-                  </View>
-
-                  <View
-                    style={{
-                      height: 5,
-                      borderRadius: 3,
-                      backgroundColor: "#F0EEE7",
-                      overflow: "hidden",
-                    }}
-                  >
-                    <View
-                      style={{
-                        height: 5,
-                        borderRadius: 3,
-                        width: `${Math.min(
-                          (item.amount / monthExpense) * 100,
-                          100
-                        )}%`,
-                        backgroundColor: item.color,
-                      }}
-                    />
-                  </View>
+                  ))}
                 </View>
-              ))}
-            </View>
-          )}
-
-          {/* Recent Transactions */}
-
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: 12,
-            }}
-          >
-            <Text
-              style={{
-                color: "#1A1D26",
-                fontSize: 14,
-                fontWeight: "500",
-              }}
-            >
-              Recent transactions
-            </Text>
-
-            <TouchableOpacity
-              onPress={() =>
-                console.log("See all transactions")
-              }
-            >
-              <Text
-                style={{
-                  color: "#5C5F68",
-                  fontSize: 12,
-                }}
-              >
-                See all
+              </View>
+            ) : (
+              <Text className="py-6 text-center text-xs text-brand-text-secondary">
+                No expenses recorded this month yet.
               </Text>
+            )}
+          </View>
+
+          <View className="mb-3 flex-row items-center justify-between">
+            <Text className="text-sm font-medium text-[#1A1D26]">Recent transactions</Text>
+            <TouchableOpacity onPress={() => router.push("/(root)/(tabs)/transactions")}>
+              <Text className="text-xs text-brand-text-secondary">See all</Text>
             </TouchableOpacity>
           </View>
 
           {loading ? (
-            <View
-              style={{
-                alignItems: "center",
-                paddingVertical: 24,
-              }}
-            >
-              <ActivityIndicator
-                size="small"
-                color="#4A9EFF"
-              />
+            <View className="items-center py-6">
+              <ActivityIndicator color="#4A9EFF" />
             </View>
           ) : recentTransactions.length === 0 ? (
-            <View
-              style={{
-                alignItems: "center",
-                paddingVertical: 24,
-              }}
-            >
-              <Text style={{ fontSize: 28 }}>📭</Text>
-
-              <Text
-                style={{
-                  color: "#8A8D96",
-                  fontSize: 14,
-                  marginTop: 10,
-                }}
-              >
-                No transactions yet
-              </Text>
+            <View className="items-center py-6">
+              <Feather name="inbox" size={28} color="#BDC3C7" />
+              <Text className="mt-3 text-sm text-brand-text-muted">No transactions yet</Text>
             </View>
           ) : (
-            recentTransactions.map((transaction) => (
-              <TransactionRow
-                key={transaction.id}
-                transaction={transaction}
-              />
-            ))
+            recentTransactions.map((tx) => <TransactionRow key={tx.id} tx={tx} />)
           )}
         </View>
       </ScrollView>
-    </View>
+
+      {user ? (
+        <BudgetModal
+          visible={budgetModalOpen}
+          budget={budget}
+          onClose={() => setBudgetModalOpen(false)}
+          onSaved={() => setBudgetModalOpen(false)}
+        />
+      ) : null}
+    </SafeAreaView>
   );
 }

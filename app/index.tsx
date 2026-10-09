@@ -1,4 +1,5 @@
 import { useAuth, useSignUp } from "@clerk/expo";
+import { signUpSchema } from "@/lib/schemas/auth";
 import { Link, Redirect } from "expo-router";
 import { useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
@@ -16,6 +17,8 @@ function getErrorMessage(error: unknown) {
 export default function MainScreen() {
   const { isLoaded, isSignedIn } = useAuth();
   const { signUp } = useSignUp();
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [emailAddress, setEmailAddress] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -23,18 +26,40 @@ export default function MainScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  const handleSignUp = async () => {
+  const handleSignUp = async (): Promise<void> => {
+    if (isSubmitting) return;
     setError("");
-    if (!emailAddress.trim() || !password) {
-      setError("Enter your email address and password to continue.");
+
+    if (!isLoaded) {
+      setError("Authentication is still loading. Please try again.");
+      return;
+    }
+
+    const parsed = signUpSchema.safeParse({ firstName, lastName, email: emailAddress, password });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Check your sign-up details.");
       return;
     }
     setIsSubmitting(true);
     try {
-      const { error: createError } = await signUp.password({ emailAddress: emailAddress.trim(), password });
-      if (createError) { setError(getErrorMessage(createError)); return; }
-      const { error: sendError } = await signUp.verifications.sendEmailCode();
-      if (sendError) { setError(getErrorMessage(sendError)); return; }
+      const result = await signUp.password({
+        emailAddress: parsed.data.email,
+        password: parsed.data.password,
+        firstName: parsed.data.firstName,
+        lastName: parsed.data.lastName,
+      });
+
+      if (result.error) {
+        setError(getErrorMessage(result.error));
+        return;
+      }
+
+      const verification = await signUp.verifications.sendEmailCode();
+      if (verification.error) {
+        setError(getErrorMessage(verification.error));
+        return;
+      }
+
       setIsVerifying(true);
     } catch (signupError) {
       setError(getErrorMessage(signupError));
@@ -104,6 +129,10 @@ export default function MainScreen() {
             </>
           ) : (
             <>
+              <Text style={styles.label}>First name</Text>
+              <TextInput style={styles.input} value={firstName} placeholder="First name" placeholderTextColor={colors.placeholder} onChangeText={(value) => { setFirstName(value); setError(""); }} autoCapitalize="words" textContentType="givenName" returnKeyType="next" />
+              <Text style={styles.label}>Last name</Text>
+              <TextInput style={styles.input} value={lastName} placeholder="Last name" placeholderTextColor={colors.placeholder} onChangeText={(value) => { setLastName(value); setError(""); }} autoCapitalize="words" textContentType="familyName" returnKeyType="next" />
               <Text style={styles.label}>Email address</Text>
               <TextInput style={styles.input} value={emailAddress} placeholder="you@example.com" placeholderTextColor={colors.placeholder} onChangeText={(value) => { setEmailAddress(value); setError(""); }} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" textContentType="emailAddress" autoComplete="email" returnKeyType="next" />
               <Text style={styles.label}>Password</Text>

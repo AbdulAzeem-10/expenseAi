@@ -1,13 +1,13 @@
 import { z } from "zod";
 
-const balancePattern = /^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/;
-
 export const onboardingSchema = z.object({
   startingBalance: z
     .string()
-    .trim()
-    .min(1, "Enter your starting balance.")
-    .regex(balancePattern, "Enter a valid amount (up to 2 decimal places)."),
+    .min(1, "Please enter a starting balance.")
+    .refine((v) => {
+      const parsed = parseFloat(v.replace(/,/g, ""));
+      return !Number.isNaN(parsed) && parsed > 0;
+    }, "Please enter a valid starting balance."),
 });
 
 export type OnboardingFormValues = z.infer<typeof onboardingSchema>;

@@ -1,4 +1,9 @@
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useFinanceData } from "@/hooks/useFinanceData";
+import { queryKeys } from "@/lib/query/keys";
+import { deleteTransaction } from "@/lib/services/transactions";
+import { getCategoryConfig } from "@/constants/categories";
 import {
   ActivityIndicator,
   Alert,
@@ -62,17 +67,23 @@ const SAMPLE_TRANSACTIONS: Transaction[] = [
 ];
 
 export default function TransactionsScreen() {
-  const [transactions, setTransactions] = useState<Transaction[]>(
-    SAMPLE_TRANSACTIONS
-  );
-
-  const [activeFilter, setActiveFilter] = useState<Filter>("All");
+  const { user, supabase, accounts: accountsQuery, transactions: transactionsQuery } = useFinanceData();
+  const queryClient = useQueryClient();
+  const transactions: Transaction[] = (transactionsQuery.data ?? []).map((tx) => ({
+    id: tx.id,
+    description: tx.description ?? getCategoryConfig(tx.category).label,
+    category: getCategoryConfig(tx.category).label,
+    type: tx.type,
+    amount: Number(tx.amount),
+    date: tx.date,
+  }));
+  const activeFilterInit: Filter = "All";
+  const [activeFilter, setActiveFilter] = useState<Filter>(activeFilterInit);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(false);
+  const loading = accountsQuery.isLoading || transactionsQuery.isLoading;
   const [refreshing, setRefreshing] = useState(false);
-
-  const accounts = SAMPLE_ACCOUNTS;
+  const accounts = accountsQuery.data ?? [];
 
   const filteredTransactions = useMemo(() => {
     let result = transactions;
@@ -83,6 +94,10 @@ export default function TransactionsScreen() {
 
     if (activeFilter === "Expense") {
       result = result.filter((tx) => tx.type === "EXPENSE");
+    }
+
+    if (activeAccountId) {
+      result = result.filter((tx) => (transactionsQuery.data ?? []).find((row) => row.id === tx.id)?.account_id === activeAccountId);
     }
 
     const query = search.trim().toLowerCase();
@@ -96,14 +111,15 @@ export default function TransactionsScreen() {
     }
 
     return result;
-  }, [transactions, activeFilter, search]);
+  }, [transactions, transactionsQuery.data, activeFilter, activeAccountId, search]);
 
-  const refreshData = () => {
+  const refreshData = async () => {
     setRefreshing(true);
-
-    setTimeout(() => {
-      setRefreshing(false);
-    }, 1000);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.transactions(user?.id) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.accounts(user?.id) }),
+    ]);
+    setRefreshing(false);
   };
 
   const handleDelete = (transaction: Transaction) => {
@@ -119,9 +135,17 @@ export default function TransactionsScreen() {
           text: "Delete",
           style: "destructive",
           onPress: () => {
-            setTransactions((current) =>
-              current.filter((tx) => tx.id !== transaction.id)
-            );
+            const row = (transactionsQuery.data ?? []).find((item) => item.id === transaction.id);
+            if (!row) return;
+            void deleteTransaction(supabase, row.id, row.account_id, Number(row.amount), row.type)
+              .then(({ error }) => {
+                if (error) throw error;
+                return Promise.all([
+                  queryClient.invalidateQueries({ queryKey: queryKeys.transactions(user?.id) }),
+                  queryClient.invalidateQueries({ queryKey: queryKeys.accounts(user?.id) }),
+                ]);
+              })
+              .catch((error) => Alert.alert("Delete failed", error instanceof Error ? error.message : "Please try again."));
           },
         },
       ]

@@ -2,6 +2,8 @@ import "@/global.css";
 import { ClerkProvider, useAuth } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
 import { Stack } from "expo-router";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "@/lib/query/client";
 import { ActivityIndicator, View } from "react-native";
 
 const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
@@ -25,8 +27,9 @@ function RootNavigator() {
   return (
     <>
       <Stack screenOptions={{ headerShown: false }}>
+        {/* Keep the index route mounted so it can route users after auth changes. */}
+        <Stack.Screen name="index" />
         <Stack.Protected guard={!isSignedIn}>
-          <Stack.Screen name="index" />
           <Stack.Screen name="(auth)" />
         </Stack.Protected>
         <Stack.Protected guard={isSignedIn}>
@@ -39,8 +42,10 @@ function RootNavigator() {
 
 export default function RootLayout() {
   return (
-    <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
-      <RootNavigator />
-    </ClerkProvider>
+    <QueryClientProvider client={queryClient}>
+      <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
+        <RootNavigator />
+      </ClerkProvider>
+    </QueryClientProvider>
   );
 }

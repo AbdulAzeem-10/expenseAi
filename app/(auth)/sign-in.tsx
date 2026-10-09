@@ -1,4 +1,6 @@
-import { Link, useRouter } from "expo-router";
+import { signInSchema, type SignInFormValues } from "@/lib/schemas/auth";
+import { Link } from "expo-router";
+import { useAuth, useSignIn } from "@clerk/expo";
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -10,137 +12,64 @@ import {
   View,
 } from "react-native";
 
-export default function SignIn() {
-  const router = useRouter();
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null) {
+    const clerkError = error as { message?: string; errors?: { longMessage?: string; message?: string }[] };
+    return clerkError.errors?.[0]?.longMessage ?? clerkError.errors?.[0]?.message ?? clerkError.message ?? "Sign in failed. Please try again.";
+  }
+  return "Sign in failed. Please try again.";
+}
 
-  const [email, setEmail] = useState("");
+export default function SignInScreen() {
+  const { isLoaded } = useAuth();
+  const { signIn } = useSignIn();
+  const [emailAddress, setEmailAddress] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const handleSignIn = async () => {
-    setError("");
-
-    if (!email.trim()) {
-      setError("Please enter your email.");
+    const parsed = signInSchema.safeParse({ email: emailAddress, password } satisfies SignInFormValues);
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Check your sign-in details.");
       return;
     }
-
-    if (!password.trim()) {
-      setError("Please enter your password.");
-      return;
-    }
+    if (!isLoaded) return;
 
     setLoading(true);
-
+    setError("");
     try {
-      // Temporary boilerplate login.
-      // Replace this with your backend authentication later.
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      console.log("Sign in:", {
-        email,
-        password,
-      });
-
-      router.replace("/");
-    } catch (err) {
-      console.error(err);
-      setError("Something went wrong. Please try again.");
+      const result = await signIn.password({ emailAddress: parsed.data.email, password: parsed.data.password });
+      if (result.error) {
+        setError(getErrorMessage(result.error));
+        return;
+      }
+      const finalized = await signIn.finalize();
+      if (finalized.error) setError(getErrorMessage(finalized.error));
+    } catch (signInError) {
+      setError(getErrorMessage(signInError));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      className="flex-1 bg-gray-100"
-    >
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} className="flex-1 bg-brand-body">
       <View className="flex-1 justify-center px-6">
-        {/* Logo / App name */}
-        <View className="mb-10">
-          <Text className="text-3xl font-bold text-gray-900">
-            Welth
-          </Text>
-
-          <Text className="text-gray-500 text-base mt-2">
-            Welcome back
-          </Text>
-        </View>
-
-        {/* Email */}
-        <Text className="text-gray-900 text-sm font-medium mb-2">
-          Email
-        </Text>
-
-        <TextInput
-          value={email}
-          onChangeText={(value) => {
-            setEmail(value);
-            setError("");
-          }}
-          placeholder="Email Address"
-          placeholderTextColor="#999"
-          autoCapitalize="none"
-          keyboardType="email-address"
-          autoCorrect={false}
-          className="bg-white border border-gray-200 rounded-xl px-4 py-4 mb-4 text-gray-900"
-        />
-
-        {/* Password */}
-        <Text className="text-gray-900 text-sm font-medium mb-2">
-          Password
-        </Text>
-
-        <TextInput
-          value={password}
-          onChangeText={(value) => {
-            setPassword(value);
-            setError("");
-          }}
-          placeholder="Password"
-          placeholderTextColor="#999"
-          secureTextEntry
-          className="bg-white border border-gray-200 rounded-xl px-4 py-4 mb-3 text-gray-900"
-        />
-
-        {/* Error */}
-        {error ? (
-          <Text className="text-red-500 text-sm mb-4">
-            {error}
-          </Text>
-        ) : null}
-
-        {/* Sign In */}
-        <TouchableOpacity
-          onPress={handleSignIn}
-          disabled={loading}
-          className="bg-black rounded-xl py-4 items-center mb-5"
-          style={{
-            opacity: loading ? 0.6 : 1,
-          }}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text className="text-white font-semibold text-base">
-              Sign In
-            </Text>
-          )}
+        <Text className="mb-2 text-3xl font-bold text-brand-bg">Welcome back</Text>
+        <Text className="mb-8 text-sm text-brand-text-muted">Sign in to continue to Welth.</Text>
+        <Text className="mb-2 text-sm font-medium text-brand-bg">Email</Text>
+        <TextInput value={emailAddress} onChangeText={(value) => { setEmailAddress(value); setError(""); }} placeholder="Email address" placeholderTextColor="#8A8D96" autoCapitalize="none" autoCorrect={false} keyboardType="email-address" textContentType="emailAddress" className="mb-4 rounded-xl border border-[#E8E6DF] bg-white px-4 py-4 text-brand-bg" />
+        <Text className="mb-2 text-sm font-medium text-brand-bg">Password</Text>
+        <TextInput value={password} onChangeText={(value) => { setPassword(value); setError(""); }} placeholder="Password" placeholderTextColor="#8A8D96" secureTextEntry textContentType="password" className="mb-4 rounded-xl border border-[#E8E6DF] bg-white px-4 py-4 text-brand-bg" onSubmitEditing={handleSignIn} />
+        {error ? <Text className="mb-4 text-sm text-brand-coral">{error}</Text> : null}
+        <TouchableOpacity onPress={handleSignIn} disabled={!isLoaded || loading} className="items-center rounded-xl bg-brand-bg py-4" accessibilityRole="button">
+          {loading ? <ActivityIndicator color="#FFFFFF" /> : <Text className="font-semibold text-white">Sign in</Text>}
         </TouchableOpacity>
-
-        {/* Sign Up */}
-        <View className="flex-row justify-center">
-          <Text className="text-gray-500">
-            Don't have an account?{" "}
-          </Text>
-
-          <Link href="/sign-up">
-            <Text className="text-blue-500 font-semibold">
-              Sign Up
-            </Text>
-          </Link>
+        <View className="mt-6 flex-row justify-center">
+          <Text className="text-sm text-brand-text-muted">New to Welth? </Text>
+          <Link href="/" className="text-sm font-semibold text-brand-blue">Create an account</Link>
         </View>
       </View>
     </KeyboardAvoidingView>

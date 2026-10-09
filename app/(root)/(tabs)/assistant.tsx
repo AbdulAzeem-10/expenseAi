@@ -1,4 +1,7 @@
 import { useState } from "react";
+import { useFinanceData } from "@/hooks/useFinanceData";
+import { useUserStore } from "@/store/userStore";
+import { askAssistant } from "@/lib/services/assistant";
 import {
   ActivityIndicator,
   FlatList,
@@ -67,6 +70,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 }
 
 export default function AssistantScreen() {
+  const { transactions: transactionsQuery, budget: budgetQuery } = useFinanceData();
+  const currency = useUserStore((state) => state.currency);
   const [messages, setMessages] =
     useState<ChatMessage[]>(INITIAL_MESSAGES);
 
@@ -86,19 +91,27 @@ export default function AssistantScreen() {
     setInput("");
     setSending(true);
 
-    // Temporary fake response.
-    // Replace this later with your actual API call.
-    setTimeout(() => {
-      const assistantMessage: ChatMessage = {
+    try {
+      const response = await askAssistant(
+        text,
+        transactionsQuery.data ?? [],
+        budgetQuery.data ?? null,
+        currency
+      );
+      setMessages((previous) => [...previous, {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content:
-          "This is a temporary assistant response. Connect your backend or AI service here.",
-      };
-
-      setMessages((previous) => [...previous, assistantMessage]);
+        content: response,
+      }]);
+    } catch (error) {
+      setMessages((previous) => [...previous, {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: error instanceof Error ? error.message : "I couldn't answer that. Please try again.",
+      }]);
+    } finally {
       setSending(false);
-    }, 1000);
+    }
   };
 
   return (

@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import cc from "currency-codes";
+import * as cc from "currency-codes";
 import getSymbol from "currency-symbol-map";
 import { useMemo, useState } from "react";
 import {
@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export type CurrencyEntry = { code: string; name: string; symbol: string };
+export type CurrencyOption = CurrencyEntry;
 
 export const ALL_CURRENCIES: CurrencyEntry[] = cc
   .codes()
