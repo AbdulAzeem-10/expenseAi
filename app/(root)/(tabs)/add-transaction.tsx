@@ -1,4 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useFinanceData } from "@/hooks/useFinanceData";
+import { queryKeys } from "@/lib/query/keys";
+import { createTransaction } from "@/lib/services/transactions";
+import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, type CategoryKey } from "@/constants/categories";
+import { transactionSchema } from "@/lib/schemas/transaction";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -15,83 +21,79 @@ const TYPE_OPTIONS = [
   { key: "INCOME", label: "Income" },
 ];
 
-const EXPENSE_CATEGORIES = [
-  "Food",
-  "Transport",
-  "Shopping",
-  "Bills",
-  "Entertainment",
-  "Health",
-  "Other",
-];
-
-const INCOME_CATEGORIES = [
-  "Salary",
-  "Business",
-  "Investment",
-  "Gift",
-  "Other",
-];
-
 export default function AddTransactionScreen() {
+  const { user, supabase, accounts: accountsQuery } = useFinanceData();
+  const queryClient = useQueryClient();
+  const accounts = accountsQuery.data ?? [];
   const [type, setType] = useState<"EXPENSE" | "INCOME">("EXPENSE");
   const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState("Food");
-  const [account, setAccount] = useState("Cash");
+  const [category, setCategory] = useState<CategoryKey>("food");
+  const [accountId, setAccountId] = useState("");
+
+  useEffect(() => {
+    if (!accountId && accounts.length) {
+      setAccountId(accounts.find((item) => item.is_default)?.id ?? accounts[0].id);
+    }
+  }, [accountId, accounts]);
   const [date, setDate] = useState(new Date());
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const categories =
-    type === "INCOME" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const categories = type === "INCOME" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
 
   const handleTypeChange = (newType: "EXPENSE" | "INCOME") => {
     setType(newType);
 
     if (newType === "INCOME") {
-      setCategory(INCOME_CATEGORIES[0]);
+      setCategory(INCOME_CATEGORIES[0].key);
     } else {
-      setCategory(EXPENSE_CATEGORIES[0]);
+      setCategory(EXPENSE_CATEGORIES[0].key);
     }
   };
 
   const handleSave = async () => {
-    if (!amount.trim()) {
-      Alert.alert("Error", "Please enter an amount.");
+    const parsedAmount = Number(amount.replace(/,/g, ""));
+    const parsed = transactionSchema.safeParse({
+      amount: parsedAmount,
+      type,
+      category,
+      account_id: accountId,
+      description: description.trim() || undefined,
+      date: date.toISOString(),
+    });
+
+    if (!parsed.success) {
+      Alert.alert("Check transaction details", parsed.error.issues[0]?.message ?? "Enter valid details.");
       return;
     }
-
-    const parsedAmount = parseFloat(amount.replace(/,/g, ""));
-
-    if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      Alert.alert("Error", "Please enter a valid amount.");
+    if (!user) {
+      Alert.alert("Account unavailable", "Please try again once your account is ready.");
       return;
     }
 
     setSaving(true);
-
     try {
-      // Replace this with your backend/database request later.
-      const transaction = {
+      const { error } = await createTransaction(supabase, {
+        user_id: user.id,
+        account_id: accountId,
         type,
         amount: parsedAmount,
         category,
-        account,
-        description: description.trim(),
+        description: description.trim() || null,
         date: date.toISOString(),
-      };
-
-      console.log("Transaction:", transaction);
-
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
+        input_method: "MANUAL",
+      });
+      if (error) throw error;
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.transactions(user.id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.accounts(user.id) }),
+      ]);
       Alert.alert("Success", "Transaction saved successfully.");
-
       setAmount("");
       setDescription("");
     } catch (error) {
-      console.error(error);
-      Alert.alert("Error", "Something went wrong.");
+      console.error("Unable to save transaction:", error);
+      Alert.alert("Save failed", error instanceof Error ? error.message : "Something went wrong.");
     } finally {
       setSaving(false);
     }
@@ -174,22 +176,22 @@ export default function AddTransactionScreen() {
           <View className="flex-row flex-wrap mb-5">
             {categories.map((item) => (
               <TouchableOpacity
-                key={item}
-                onPress={() => setCategory(item)}
+                key={item.key}
+                onPress={() => setCategory(item.key)}
                 className={`px-4 py-2.5 rounded-full mr-2 mb-2 border ${
-                  category === item
+                  category === item.key
                     ? "bg-black border-black"
                     : "bg-white border-gray-200"
                 }`}
               >
                 <Text
                   className={
-                    category === item
+                    category === item.key
                       ? "text-white"
                       : "text-gray-600"
                   }
                 >
-                  {item}
+                  {item.label}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -201,24 +203,24 @@ export default function AddTransactionScreen() {
           </Text>
 
           <View className="flex-row mb-5">
-            {["Cash", "Bank", "Credit Card"].map((item) => (
+            {accounts.map((item) => (
               <TouchableOpacity
-                key={item}
-                onPress={() => setAccount(item)}
+                key={item.id}
+                onPress={() => setAccountId(item.id)}
                 className={`px-4 py-3 rounded-xl mr-2 border ${
-                  account === item
+                  accountId === item.id
                     ? "bg-black border-black"
                     : "bg-white border-gray-200"
                 }`}
               >
                 <Text
                   className={
-                    account === item
+                    accountId === item.id
                       ? "text-white"
                       : "text-gray-600"
                   }
                 >
-                  {item}
+                  {item.name}
                 </Text>
               </TouchableOpacity>
             ))}
