@@ -41,7 +41,25 @@
         }
       ],
       "@clerk/expo",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow ExpenseMng to take photos of receipts."
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow ExpenseMng to record a voice transaction."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow ExpenseMng to select a receipt photo."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

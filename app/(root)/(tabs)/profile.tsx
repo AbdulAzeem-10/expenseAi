@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useClerk } from "@clerk/expo";
-import { useQueryClient } from "@tanstack/react-query";
+import { AccountModal } from "@/components/AccountModal";
 import { useFinanceData } from "@/hooks/useFinanceData";
+import { useSetDefaultAccount } from "@/hooks/mutations/useAccountMutations";
 import { useUserStore } from "@/store/userStore";
-import { queryKeys } from "@/lib/query/keys";
-import { createAccount, setDefaultAccount } from "@/lib/services/accounts";
+import type { Account as FinanceAccount } from "@/types/account";
 import { ALL_CURRENCIES, CurrencyPicker } from "@/components/CurrencyPicker";
 import {
   ActivityIndicator,
@@ -15,31 +15,6 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-
-type Account = {
-  id: string;
-  name: string;
-  type: "CASH" | "BANK" | "CREDIT_CARD" | "SAVINGS";
-  balance: number;
-  isDefault: boolean;
-};
-
-const INITIAL_ACCOUNTS: Account[] = [
-  {
-    id: "1",
-    name: "Cash",
-    type: "CASH",
-    balance: 25000,
-    isDefault: true,
-  },
-  {
-    id: "2",
-    name: "Bank Account",
-    type: "BANK",
-    balance: 75000,
-    isDefault: false,
-  },
-];
 
 function SectionLabel({ children }: { children: string }) {
   return (
@@ -133,20 +108,16 @@ function Row({
 
 export default function ProfileScreen() {
   const { user, supabase, accounts: accountsQuery } = useFinanceData();
-  const queryClient = useQueryClient();
   const { signOut } = useClerk();
+  const setDefaultMutation = useSetDefaultAccount();
   const currency = useUserStore((state) => state.currency);
   const setCurrency = useUserStore((state) => state.setCurrency);
   const [biometricLock, setBiometricLock] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const accounts: Account[] = (accountsQuery.data ?? []).map((account) => ({
-    id: account.id,
-    name: account.name,
-    type: account.type,
-    balance: Number(account.balance),
-    isDefault: account.is_default,
-  }));
+  const [accountModalOpen, setAccountModalOpen] = useState(false);
+  const [selectedAccount, setSelectedAccount] = useState<FinanceAccount | null>(null);
+  const accounts = accountsQuery.data ?? [];
 
   const formatPrice = (amount: number) => {
     return `${currency} ${amount.toLocaleString()}`;
@@ -172,34 +143,19 @@ export default function ProfileScreen() {
     ]);
   };
 
-  const handleAccount = (account: Account) => {
-    Alert.alert(account.name, "Balance: " + formatPrice(account.balance), [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Make Default",
-        onPress: () => {
-          if (!user) return;
-          void setDefaultAccount(supabase, user.id, account.id)
-            .then(() => queryClient.invalidateQueries({ queryKey: queryKeys.accounts(user.id) }))
-            .catch((error) => Alert.alert("Update failed", error instanceof Error ? error.message : "Please try again."));
-        },
-      },
-    ]);
+  const handleAccount = (account: FinanceAccount) => {
+    setSelectedAccount(account);
+    setAccountModalOpen(true);
   };
 
   const handleAddAccount = () => {
-    if (!user) return;
-    void createAccount(supabase, user.id, {
-      name: "Account " + (accounts.length + 1),
-      type: "CASH",
-    })
-      .then(() => queryClient.invalidateQueries({ queryKey: queryKeys.accounts(user.id) }))
-      .catch((error) => Alert.alert("Create account failed", error instanceof Error ? error.message : "Please try again."));
+    setSelectedAccount(null);
+    setAccountModalOpen(true);
   };
 
   const handleCurrency = () => setPickerOpen(true);
 
-  const getAccountIcon = (type: Account["type"]) => {
+  const getAccountIcon = (type: FinanceAccount["type"]) => {
     switch (type) {
       case "CASH":
         return "💵";
@@ -321,7 +277,7 @@ export default function ProfileScreen() {
               icon={getAccountIcon(account.type)}
               label={
                 account.name +
-                (account.isDefault ? " (default)" : "")
+                (account.is_default ? " (default)" : "")
               }
               value={formatPrice(account.balance)}
               onPress={() => handleAccount(account)}
@@ -434,6 +390,22 @@ export default function ProfileScreen() {
           })();
         }}
         onClose={() => setPickerOpen(false)}
+      />
+      <AccountModal
+        visible={accountModalOpen}
+        account={selectedAccount}
+        onClose={() => setAccountModalOpen(false)}
+        onSaved={() => setAccountModalOpen(false)}
+        onDeleted={() => {
+          setAccountModalOpen(false);
+          setSelectedAccount(null);
+        }}
+        onMadeDefault={() => {
+          if (!selectedAccount) return;
+          void setDefaultMutation.mutateAsync(selectedAccount.id)
+            .then(() => setAccountModalOpen(false))
+            .catch((error) => Alert.alert("Update failed", error instanceof Error ? error.message : "Please try again."));
+        }}
       />
     </View>
   );

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Feather } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import { BlurView } from "expo-blur";
 import {
   Alert,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -13,10 +14,17 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, type CategoryKey } from "@/constants/categories";
+import { AI_GRADIENT, AI_GRADIENT_REVERSE } from "@/constants/theme";
+import { AIActionCard } from "@/components/AiActionCard";
+import { CalendarPicker } from "@/components/CalenderPicker";
+import { PillGroup } from "@/components/PillGroup";
+import { ReceiptScannerModal } from "@/components/ReceiptScannerModal";
+import { VoiceRecorderModal } from "@/components/VoiceRecorderModal";
 import { useFinanceData } from "@/hooks/useFinanceData";
 import { useCreateTransaction } from "@/hooks/mutations/useTransactionMutations";
 import { transactionSchema } from "@/lib/schemas/transaction";
 import type { TransactionType } from "@/types/transaction";
+import { extractTransactionFromReceipt, extractTransactionFromVoice } from "@/lib/services/extractTransaction";
 
 const INK = "#0B0E14";
 const MUTED = "#777A80";
@@ -32,6 +40,11 @@ export default function AddTransactionScreen() {
   const [accountId, setAccountId] = useState("");
   const [date, setDate] = useState(new Date());
   const [description, setDescription] = useState("");
+  const [processing, setProcessing] = useState(false);
+  const [receiptScannerOpen, setReceiptScannerOpen] = useState(false);
+  const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [inputMethod, setInputMethod] = useState<"MANUAL" | "RECEIPT_SCAN" | "VOICE">("MANUAL");
 
   useEffect(() => {
     if (!accountId && accounts.length) {
@@ -44,6 +57,34 @@ export default function AddTransactionScreen() {
     setType(nextType);
     setCategory(nextType === "INCOME" ? INCOME_CATEGORIES[0].key : EXPENSE_CATEGORIES[0].key);
   };
+
+  const applyExtracted = (result: Awaited<ReturnType<typeof extractTransactionFromReceipt>>, method: "RECEIPT_SCAN" | "VOICE") => {
+    if (result.type) handleTypeChange(result.type);
+    if (result.amount != null) setAmount(String(result.amount));
+    if (result.category) setCategory(result.category);
+    if (result.description) setDescription(result.description);
+    if (result.date && /^\d{4}-\d{2}-\d{2}$/.test(result.date)) {
+      const [year, month, day] = result.date.split("-").map(Number);
+      setDate(new Date(year, month - 1, day));
+    }
+    setInputMethod(method);
+    Alert.alert("Details added", "Review the extracted details, then save your transaction.");
+  };
+
+  const handleReceiptCaptured = async (base64: string, mimeType: string) => {
+    setReceiptScannerOpen(false);
+    try {
+      setProcessing(true);
+      const extracted = await extractTransactionFromReceipt(base64, mimeType);
+      applyExtracted(extracted, "RECEIPT_SCAN");
+    } catch (error) {
+      Alert.alert("Receipt scan failed", error instanceof Error ? error.message : "Try another photo.");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleVoiceExtracted = (result: Awaited<ReturnType<typeof extractTransactionFromVoice>>) => applyExtracted(result, "VOICE");
 
   const handleSave = async () => {
     const parsed = transactionSchema.safeParse({ type, amount, category, accountId, description: description.trim() || undefined, date });
@@ -65,12 +106,13 @@ export default function AddTransactionScreen() {
         category: parsed.data.category,
         description: parsed.data.description?.trim() || null,
         date: parsed.data.date.toISOString(),
-        input_method: "MANUAL",
+        input_method: inputMethod,
       });
       if (result.error) throw result.error;
       Alert.alert("Success", "Transaction saved successfully.");
       setAmount("");
       setDescription("");
+      setInputMethod("MANUAL");
     } catch (error) {
       console.error("Unable to save transaction:", error);
       Alert.alert("Save failed", error instanceof Error ? error.message : "Something went wrong.");
@@ -84,21 +126,14 @@ export default function AddTransactionScreen() {
           <Text style={{ color: INK, fontSize: 28, fontWeight: "700", marginBottom: 18 }}>Add transaction</Text>
 
           <View style={{ flexDirection: "row", gap: 12, marginBottom: 22 }}>
-            <LinearGradient colors={["#26A78A", "#278CB1"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ flex: 1, minHeight: 132, borderRadius: 24, padding: 18, justifyContent: "space-between" }}>
-              <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFFFFF35", alignItems: "center", justifyContent: "center" }}><Feather name="camera" size={21} color="white" /></View>
-              <View><Text style={{ color: "white", fontSize: 17, fontWeight: "600" }}>Scan receipt</Text><Text style={{ color: "#FFFFFFCC", marginTop: 2 }}>Snap a photo</Text></View>
-            </LinearGradient>
-            <LinearGradient colors={["#268FB4", "#24A68E"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ flex: 1, minHeight: 132, borderRadius: 24, padding: 18, justifyContent: "space-between" }}>
-              <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFFFFF35", alignItems: "center", justifyContent: "center" }}><Feather name="mic" size={21} color="white" /></View>
-              <View><Text style={{ color: "white", fontSize: 17, fontWeight: "600" }}>Voice log</Text><Text style={{ color: "#FFFFFFCC", marginTop: 2 }}>Just say it</Text></View>
-            </LinearGradient>
+            <AIActionCard icon="camera" title="Scan receipt" subtitle="Snap a photo" colors={AI_GRADIENT} onPress={() => setReceiptScannerOpen(true)} />
+            <AIActionCard icon="mic" title="Voice log" subtitle="Just say it" colors={AI_GRADIENT_REVERSE} onPress={() => setVoiceRecorderOpen(true)} />
           </View>
+          {processing ? <BlurView intensity={35} tint="light" style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 18, padding: 12, borderRadius: 14, overflow: "hidden" }}><ActivityIndicator color="#268FB4" /><Text style={{ color: MUTED }}>Reading transaction details…</Text></BlurView> : null}
 
           <View style={{ flexDirection: "row", backgroundColor: "white", borderWidth: 1, borderColor: BORDER, borderRadius: 16, padding: 4, marginBottom: 22 }}>
             {(["EXPENSE", "INCOME"] as const).map((option) => (
-              <TouchableOpacity key={option} onPress={() => handleTypeChange(option)} style={{ flex: 1, alignItems: "center", paddingVertical: 13, borderRadius: 12, backgroundColor: type === option ? INK : "transparent" }}>
-                <Text style={{ color: type === option ? "white" : MUTED, fontWeight: "600" }}>{option === "EXPENSE" ? "Expense" : "Income"}</Text>
-              </TouchableOpacity>
+              <TouchableOpacity key={option} onPress={() => handleTypeChange(option)} style={{ flex: 1, alignItems: "center", paddingVertical: 13, borderRadius: 12, backgroundColor: type === option ? INK : "transparent" }}><Text style={{ color: type === option ? "white" : MUTED, fontWeight: "600" }}>{option === "EXPENSE" ? "Expense" : "Income"}</Text></TouchableOpacity>
             ))}
           </View>
 
@@ -106,32 +141,25 @@ export default function AddTransactionScreen() {
           <TextInput value={amount} onChangeText={setAmount} placeholder="0" placeholderTextColor="#9A9A9A" keyboardType="decimal-pad" style={inputStyle} />
 
           <FieldLabel>Category</FieldLabel>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }} contentContainerStyle={{ gap: 8, paddingRight: 4 }}>
-            {categories.map((item) => {
-              const selected = category === item.key;
-              return <TouchableOpacity key={item.key} onPress={() => setCategory(item.key)} style={{ flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 14, paddingVertical: 11, borderRadius: 24, borderWidth: 1, borderColor: selected ? INK : BORDER, backgroundColor: selected ? INK : "white" }}><Text style={{ fontSize: 15 }}>{item.icon}</Text><Text numberOfLines={1} style={{ color: selected ? "white" : MUTED, fontSize: 14 }}>{item.label}</Text></TouchableOpacity>;
-            })}
-          </ScrollView>
+          <View style={{ marginBottom: 20 }}><PillGroup options={categories.map((item) => ({ key: item.key, label: item.label, icon: item.icon }))} value={category} onChange={setCategory} /></View>
 
           <FieldLabel>Account</FieldLabel>
-          {accounts.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }} contentContainerStyle={{ gap: 8, paddingRight: 4 }}>
-            {accounts.map((item) => {
-              const selected = accountId === item.id;
-              return <TouchableOpacity key={item.id} onPress={() => setAccountId(item.id)} style={{ paddingHorizontal: 16, paddingVertical: 11, borderRadius: 24, borderWidth: 1, borderColor: selected ? INK : BORDER, backgroundColor: selected ? INK : "white" }}><Text style={{ color: selected ? "white" : MUTED, fontSize: 14 }}>{item.name}</Text></TouchableOpacity>;
-            })}
-          </ScrollView> : <Text style={{ color: MUTED, marginBottom: 20 }}>Create an account before adding a transaction.</Text>}
+          {accounts.length ? <View style={{ marginBottom: 20 }}><PillGroup options={accounts.map((item) => ({ key: item.id, label: item.name }))} value={accountId} onChange={setAccountId} /></View> : <Text style={{ color: MUTED, marginBottom: 20 }}>Create an account before adding a transaction.</Text>}
 
           <FieldLabel>Date</FieldLabel>
-          <View style={[inputStyle, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}><Text style={{ color: INK, fontSize: 16 }}>{date.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" })}</Text><Feather name="calendar" size={20} color="#52545A" /></View>
+          <TouchableOpacity onPress={() => setCalendarOpen(true)} style={[inputStyle, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}><Text style={{ color: INK, fontSize: 16 }}>{date.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" })}</Text><Feather name="calendar" size={20} color="#52545A" /></TouchableOpacity>
 
           <FieldLabel>Description (optional)</FieldLabel>
           <TextInput value={description} onChangeText={setDescription} placeholder="e.g. Grocery shopping" placeholderTextColor="#999" style={inputStyle} />
 
-          <TouchableOpacity onPress={handleSave} disabled={createMutation.isPending || !accounts.length} style={{ backgroundColor: INK, borderRadius: 17, paddingVertical: 18, alignItems: "center", marginTop: 4, opacity: createMutation.isPending || !accounts.length ? 0.6 : 1 }}>
+          <TouchableOpacity onPress={handleSave} disabled={createMutation.isPending || processing || !accounts.length} style={{ backgroundColor: INK, borderRadius: 17, paddingVertical: 18, alignItems: "center", marginTop: 4, opacity: createMutation.isPending || processing || !accounts.length ? 0.6 : 1 }}>
             <Text style={{ color: "white", fontSize: 16, fontWeight: "600" }}>{createMutation.isPending ? "Saving..." : "Save transaction"}</Text>
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+      <ReceiptScannerModal visible={receiptScannerOpen} onClose={() => setReceiptScannerOpen(false)} onCaptured={(base64, mimeType) => { void handleReceiptCaptured(base64, mimeType); }} />
+      <VoiceRecorderModal visible={voiceRecorderOpen} onClose={() => setVoiceRecorderOpen(false)} onExtracted={handleVoiceExtracted} />
+      <CalendarPicker visible={calendarOpen} value={date} maximumDate={new Date()} onChange={setDate} onClose={() => setCalendarOpen(false)} />
     </SafeAreaView>
   );
 }

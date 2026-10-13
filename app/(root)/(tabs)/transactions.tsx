@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { Feather } from "@expo/vector-icons";
 import { useQueryClient } from "@tanstack/react-query";
+import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useFinanceData } from "@/hooks/useFinanceData";
+import { useDeleteTransaction } from "@/hooks/mutations/useTransactionMutations";
 import { queryKeys } from "@/lib/query/keys";
-import { deleteTransaction } from "@/lib/services/transactions";
 import { getCategoryConfig } from "@/constants/categories";
 import { exportTransactionsToCsv } from "@/lib/utils/exportTransactions";
 import {
@@ -69,8 +70,9 @@ const SAMPLE_TRANSACTIONS: Transaction[] = [
 ];
 
 export default function TransactionsScreen() {
-  const { user, supabase, accounts: accountsQuery, transactions: transactionsQuery } = useFinanceData();
+  const { user, accounts: accountsQuery, transactions: transactionsQuery } = useFinanceData();
   const queryClient = useQueryClient();
+  const deleteMutation = useDeleteTransaction();
   const transactions: Transaction[] = (transactionsQuery.data ?? []).map((tx) => ({
     id: tx.id,
     description: tx.description ?? getCategoryConfig(tx.category).label,
@@ -85,6 +87,7 @@ export default function TransactionsScreen() {
   const [search, setSearch] = useState("");
   const loading = accountsQuery.isLoading || transactionsQuery.isLoading;
   const [refreshing, setRefreshing] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const accounts = accountsQuery.data ?? [];
   const chartTransactions = transactions.filter((tx) => {
     if (activeFilter === "Income" && tx.type !== "INCOME") return false;
@@ -188,15 +191,13 @@ export default function TransactionsScreen() {
           onPress: () => {
             const row = (transactionsQuery.data ?? []).find((item) => item.id === transaction.id);
             if (!row) return;
-            void deleteTransaction(supabase, row.id, row.account_id, Number(row.amount), row.type)
+            setDeletingId(transaction.id);
+            void deleteMutation.mutateAsync(row)
               .then(({ error }) => {
                 if (error) throw error;
-                return Promise.all([
-                  queryClient.invalidateQueries({ queryKey: queryKeys.transactions(user?.id) }),
-                  queryClient.invalidateQueries({ queryKey: queryKeys.accounts(user?.id) }),
-                ]);
               })
-              .catch((error) => Alert.alert("Delete failed", error instanceof Error ? error.message : "Please try again."));
+              .catch((error) => Alert.alert("Delete failed", error instanceof Error ? error.message : "Please try again."))
+              .finally(() => setDeletingId(null));
           },
         },
       ]
@@ -411,6 +412,34 @@ export default function TransactionsScreen() {
             />
           }
           renderItem={({ item }) => (
+            <ReanimatedSwipeable
+              overshootRight={false}
+              friction={2}
+              rightThreshold={48}
+              renderRightActions={() => (
+                <TouchableOpacity
+                  onPress={() => handleDelete(item)}
+                  disabled={deletingId === item.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Delete ${item.description}`}
+                  style={{
+                    width: 76,
+                    minHeight: 90,
+                    marginBottom: 12,
+                    borderRadius: 20,
+                    backgroundColor: "#D94A45",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    opacity: deletingId === item.id ? 0.6 : 1,
+                  }}
+                >
+                  <Feather name="trash-2" size={21} color="#FFFFFF" />
+                  <Text style={{ color: "#FFFFFF", fontSize: 11, fontWeight: "600", marginTop: 5 }}>
+                    {deletingId === item.id ? "Deleting" : "Delete"}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            >
             <View
               style={{
                 backgroundColor: "#FFFFFF",
@@ -475,21 +504,9 @@ export default function TransactionsScreen() {
                   ₹{item.amount.toLocaleString("en-IN")}
                 </Text>
 
-                <TouchableOpacity
-                  onPress={() => handleDelete(item)}
-                  style={{ marginTop: 6 }}
-                >
-                  <Text
-                    style={{
-                      color: "#FF6B4A",
-                      fontSize: 11,
-                    }}
-                  >
-                    Delete
-                  </Text>
-                </TouchableOpacity>
               </View>
             </View>
+            </ReanimatedSwipeable>
           )}
           ListEmptyComponent={
             <View

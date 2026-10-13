@@ -6,8 +6,15 @@ import type { ExtractedTransaction } from "@/types/transaction";
 
 export type { ExtractedTransaction } from "@/types/transaction";
 
-const GEMINI_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent";
+// Keep stable multimodal Flash endpoints in fallback order. Avoid preview IDs:
+// preview availability and quotas are less predictable for production use.
+const GEMINI_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+] as const;
 
 const RESPONSE_SCHEMA = {
   type: "object",
@@ -30,33 +37,51 @@ async function callGemini(promptText: string, inlineData: { mimeType: string; da
   const apiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
   if (!apiKey) throw new Error("Missing EXPO_PUBLIC_GEMINI_API_KEY");
 
-  const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: promptText }, { inlineData }],
-        },
-      ],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: RESPONSE_SCHEMA,
-      },
-    }),
-  });
+  const errors: string[] = [];
+  for (const model of GEMINI_MODELS) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25_000);
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: promptText }, { inlineData }] }],
+          generationConfig: { responseMimeType: "application/json", responseSchema: RESPONSE_SCHEMA },
+        }),
+      });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Gemini request failed: ${errText}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        const detail = body?.error?.message;
+        errors.push(`${model} (${res.status})${detail ? `: ${String(detail).slice(0, 160)}` : ""}`);
+        continue;
+      }
+
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) {
+        errors.push(`${model}: empty response`);
+        continue;
+      }
+      const result = JSON.parse(text) as ExtractedTransaction;
+      return result;
+    } catch (error) {
+      errors.push(`${model}: ${error instanceof Error ? error.message : "request failed"}`);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
-  const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error("No response from Gemini");
+  const allTemporarilyUnavailable = errors.length > 0 && errors.every((error) =>
+    /\((503|429)\)|timed out|abort|empty response/i.test(error)
+  );
+  if (allTemporarilyUnavailable) {
+    throw new Error(`Google AI is temporarily busy. Tried ${GEMINI_MODELS.length} Flash models; please try again shortly.`);
+  }
 
-  return JSON.parse(text) as ExtractedTransaction;
+  throw new Error(`AI extraction failed across ${GEMINI_MODELS.length} Flash models. ${errors.at(-1) ?? "Please try again."}`);
 }
 
 export async function extractTransactionFromReceipt(
