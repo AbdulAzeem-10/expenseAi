@@ -1,4 +1,5 @@
 import { BudgetModal } from "@/components/BudgetModal";
+import { BrandLogo } from "@/components/BrandLogo";
 import { TransactionRow } from "@/components/TransactionRow";
 import { getCategoryConfig } from "@/constants/categories";
 import { useFinanceData } from "@/hooks/useFinanceData";
@@ -40,8 +41,8 @@ export default function HomeScreen() {
   const currency = useUserStore((state) => state.currency);
   const [budgetModalOpen, setBudgetModalOpen] = useState(false);
 
-  const accounts = accountsQuery.data ?? [];
-  const transactions = transactionsQuery.data ?? [];
+  const accounts = useMemo(() => accountsQuery.data ?? [], [accountsQuery.data]);
+  const transactions = useMemo(() => transactionsQuery.data ?? [], [transactionsQuery.data]);
   const budget = budgetQuery.data ?? null;
   const loading = accountsQuery.isLoading || transactionsQuery.isLoading;
   const refreshing = accountsQuery.isRefetching || transactionsQuery.isRefetching || budgetQuery.isRefetching;
@@ -103,13 +104,7 @@ export default function HomeScreen() {
     : 0;
 
   const handleQuickAction = (action: (typeof QUICK_ACTIONS)[number]["action"]) => {
-    if (action === "voice") {
-      router.push("/(root)/(tabs)/assistant");
-      return;
-    }
-    // Receipt scanning is not implemented yet, so both remaining actions open
-    // the existing transaction form.
-    router.push("/(root)/(tabs)/add-transaction");
+    router.push({ pathname: "/(root)/(tabs)/add-transaction", params: { action } });
   };
 
   return (
@@ -121,12 +116,7 @@ export default function HomeScreen() {
       >
         <View className="rounded-b-[28px] bg-brand-bg px-5 pb-[22px] pt-5">
           <View className="mb-[22px] flex-row items-center justify-between">
-            <View className="flex-row items-center gap-2">
-              <View className="h-9 w-9 items-center justify-center rounded-xl bg-white">
-                <Text className="text-lg font-extrabold text-brand-bg">W</Text>
-              </View>
-              <Text className="text-base font-bold tracking-widest text-brand-text-primary">WELTH</Text>
-            </View>
+            <BrandLogo width={144} height={52} />
 
             <View className="flex-row items-center gap-2.5">
               <View className="items-end">

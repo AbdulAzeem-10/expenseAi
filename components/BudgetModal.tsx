@@ -36,7 +36,7 @@ export function BudgetModal({ visible, budget, onClose, onSaved }: BudgetModalPr
       setAmount(budget ? String(budget.amount) : "");
       setError("");
     }
-  }, [visible, budget?.amount]);
+  }, [visible, budget]);
 
   const handleSave = async () => {
     const parsedAmount = Number(amount.replace(/,/g, "").trim());

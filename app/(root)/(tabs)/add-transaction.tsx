@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import {
@@ -31,9 +32,11 @@ const MUTED = "#777A80";
 const BORDER = "#E5E4DF";
 
 export default function AddTransactionScreen() {
+  const router = useRouter();
+  const { action } = useLocalSearchParams<{ action?: string }>();
   const { user, accounts: accountsQuery } = useFinanceData();
   const createMutation = useCreateTransaction();
-  const accounts = accountsQuery.data ?? [];
+  const accounts = useMemo(() => accountsQuery.data ?? [], [accountsQuery.data]);
   const [type, setType] = useState<TransactionType>("EXPENSE");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState<CategoryKey>("food");
@@ -51,6 +54,12 @@ export default function AddTransactionScreen() {
       setAccountId(accounts.find((item) => item.is_default)?.id ?? accounts[0].id);
     }
   }, [accountId, accounts]);
+
+  useEffect(() => {
+    if (action === "scan") setReceiptScannerOpen(true);
+    if (action === "voice") setVoiceRecorderOpen(true);
+    if (action) router.setParams({ action: undefined });
+  }, [action, router]);
 
   const categories = type === "INCOME" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
   const handleTypeChange = (nextType: TransactionType) => {

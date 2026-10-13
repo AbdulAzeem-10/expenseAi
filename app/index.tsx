@@ -1,4 +1,5 @@
 import { useAuth, useSignUp } from "@clerk/expo";
+import { BrandLogo } from "@/components/BrandLogo";
 import { signUpSchema } from "@/lib/schemas/auth";
 import { Link, Redirect } from "expo-router";
 import { useState } from "react";
@@ -106,8 +107,8 @@ export default function MainScreen() {
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <View style={styles.brandMark}><Text style={styles.brandMarkText}>W</Text></View>
-          <Text style={styles.eyebrow}>WELTH · EXPENSE MANAGER</Text>
+          <BrandLogo width={250} height={90} />
+          <Text style={styles.eyebrow}>EXPENSEAI · EXPENSE MANAGER</Text>
           <Text style={styles.title}>{isVerifying ? "Check your email" : "Make room for better money habits."}</Text>
           <Text style={styles.subtitle}>
             {isVerifying
@@ -159,8 +160,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 }, safeArea: { flex: 1, backgroundColor: colors.background },
   content: { flexGrow: 1, justifyContent: "center", paddingHorizontal: 24, paddingVertical: 32 },
   loadingScreen: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, backgroundColor: colors.background }, loadingText: { color: colors.muted, fontSize: 14 },
-  brandMark: { width: 48, height: 48, alignItems: "center", justifyContent: "center", borderRadius: 16, backgroundColor: colors.ink, marginBottom: 18 }, brandMarkText: { color: colors.white, fontSize: 24, fontWeight: "800" },
-  eyebrow: { color: colors.accent, fontSize: 11, fontWeight: "800", letterSpacing: 1.6, marginBottom: 14 },
+  eyebrow: { color: colors.accent, fontSize: 11, fontWeight: "800", letterSpacing: 1.6, marginTop: 18, marginBottom: 14 },
   title: { color: colors.ink, fontSize: 34, lineHeight: 40, fontWeight: "800", letterSpacing: -0.7, marginBottom: 10 }, subtitle: { color: colors.muted, fontSize: 15, lineHeight: 23, marginBottom: 28 },
   label: { color: colors.ink, fontSize: 13, fontWeight: "700", marginBottom: 8, marginTop: 12 },
   input: { minHeight: 54, borderWidth: 1, borderColor: colors.border, borderRadius: 14, backgroundColor: colors.white, paddingHorizontal: 16, color: colors.ink, fontSize: 15 },

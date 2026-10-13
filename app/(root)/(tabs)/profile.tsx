@@ -1,11 +1,16 @@
-import { useState } from "react";
-import { useClerk } from "@clerk/expo";
 import { AccountModal } from "@/components/AccountModal";
-import { useFinanceData } from "@/hooks/useFinanceData";
+import { CurrencyPicker } from "@/components/CurrencyPicker";
 import { useSetDefaultAccount } from "@/hooks/mutations/useAccountMutations";
+import { useFinanceData } from "@/hooks/useFinanceData";
+import type { Account, AccountType } from "@/lib/services/accounts";
+import { formatPrice } from "@/lib/utils";
 import { useUserStore } from "@/store/userStore";
-import type { Account as FinanceAccount } from "@/types/account";
-import { ALL_CURRENCIES, CurrencyPicker } from "@/components/CurrencyPicker";
+import { useAuth } from "@clerk/expo";
+import { Feather } from "@expo/vector-icons";
+import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
+import { useRouter } from "expo-router";
+import { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,20 +20,18 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+const ACCOUNT_ICON: Record<AccountType, keyof typeof Feather.glyphMap> = {
+  CASH: "dollar-sign",
+  BANK: "home",
+  CREDIT_CARD: "credit-card",
+  SAVINGS: "shield",
+};
 
 function SectionLabel({ children }: { children: string }) {
   return (
-    <Text
-      style={{
-        fontSize: 11,
-        textTransform: "uppercase",
-        letterSpacing: 1,
-        color: "#8A8D96",
-        marginTop: 24,
-        marginBottom: 8,
-        marginHorizontal: 20,
-      }}
-    >
+    <Text className="text-brand-text-muted text-[11px] uppercase tracking-wide mb-2 mt-6 mx-5">
       {children}
     </Text>
   );
@@ -42,7 +45,7 @@ function Row({
   showChevron = true,
   danger = false,
 }: {
-  icon: string;
+  icon: keyof typeof Feather.glyphMap;
   label: string;
   value?: string;
   onPress?: () => void;
@@ -53,54 +56,23 @@ function Row({
     <TouchableOpacity
       onPress={onPress}
       disabled={!onPress}
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "#FFFFFF",
-        paddingHorizontal: 16,
-        paddingVertical: 14,
-        borderBottomWidth: 1,
-        borderBottomColor: "#F0EEE7",
-      }}
+      className="flex-row items-center bg-white px-4 py-3.5 border-b border-[#F0EEE7] last:border-b-0"
     >
-      <View
-        style={{
-          width: 32,
-          height: 32,
-          borderRadius: 16,
-          backgroundColor: "#F5F4F0",
-          alignItems: "center",
-          justifyContent: "center",
-          marginRight: 12,
-        }}
-      >
-        <Text style={{ fontSize: 15 }}>{icon}</Text>
+      <View className="w-8 h-8 rounded-full bg-[#F5F4F0] items-center justify-center mr-3">
+        <Feather name={icon} size={15} color={danger ? "#FF6B4A" : "#5C5F68"} />
       </View>
-
       <Text
-        style={{
-          flex: 1,
-          fontSize: 14,
-          color: danger ? "#FF6B4A" : "#1A1D26",
-        }}
+        className={`flex-1 text-sm ${
+          danger ? "text-brand-coral" : "text-brand-bg"
+        }`}
       >
         {label}
       </Text>
-
       {value && (
-        <Text
-          style={{
-            fontSize: 12,
-            color: "#5C5F68",
-            marginRight: 8,
-          }}
-        >
-          {value}
-        </Text>
+        <Text className="text-brand-text-secondary text-xs mr-2">{value}</Text>
       )}
-
       {showChevron && onPress && (
-        <Text style={{ color: "#BDC3C7", fontSize: 18 }}>›</Text>
+        <Feather name="chevron-right" size={16} color="#BDC3C7" />
       )}
     </TouchableOpacity>
   );
@@ -108,264 +80,209 @@ function Row({
 
 export default function ProfileScreen() {
   const { user, supabase, accounts: accountsQuery } = useFinanceData();
-  const { signOut } = useClerk();
-  const setDefaultMutation = useSetDefaultAccount();
+  const { signOut } = useAuth();
+  const router = useRouter();
   const currency = useUserStore((state) => state.currency);
   const setCurrency = useUserStore((state) => state.setCurrency);
   const [biometricLock, setBiometricLock] = useState(false);
+
+  const [modalVisible, setModalVisible] = useState(false);
+  const [editingAccount, setEditingAccount] = useState<Account | null>(null);
+  const [currencyPickerOpen, setCurrencyPickerOpen] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [accountModalOpen, setAccountModalOpen] = useState(false);
-  const [selectedAccount, setSelectedAccount] = useState<FinanceAccount | null>(null);
+
   const accounts = accountsQuery.data ?? [];
+  const loadingAccounts = accountsQuery.isLoading;
+  const accountsError = accountsQuery.isError;
+  const { mutateAsync: setDefaultAccount } = useSetDefaultAccount();
 
-  const formatPrice = (amount: number) => {
-    return `${currency} ${amount.toLocaleString()}`;
-  };
+  const handlePickAvatar = async () => {
+    if (!user) return;
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Permission needed", "Allow photo library access to set a profile picture.");
+        return;
+      }
 
-  const handleAvatar = () => {
-    setUploadingAvatar(true);
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.7,
+        base64: true,
+      });
+      if (result.canceled) return;
 
-    setTimeout(() => {
+      setUploadingAvatar(true);
+      const asset = result.assets[0];
+      if (!asset.base64) throw new Error("The selected photo could not be read.");
+      const extension = asset.uri.split(".").pop()?.toLowerCase();
+      const mimeType = extension === "png" ? "image/png" : "image/jpeg";
+      const dataUrl = `data:${mimeType};base64,${asset.base64}`;
+
+      await user.setProfileImage({ file: dataUrl });
+    } catch (err) {
+      console.error("Avatar upload failed:", err);
+      Alert.alert("Error", "Couldn't upload your photo. Please try again.");
+    } finally {
       setUploadingAvatar(false);
-
-      Alert.alert(
-        "Profile picture",
-        "Avatar picker would open here."
-      );
-    }, 800);
+    }
   };
 
   const handleSignOut = () => {
     Alert.alert("Sign out", "Are you sure you want to sign out?", [
       { text: "Cancel", style: "cancel" },
-      { text: "Sign out", style: "destructive", onPress: () => { void signOut(); } },
+      {
+        text: "Sign out",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await signOut();
+            router.replace("/sign-in");
+          } catch {
+            Alert.alert("Sign out failed", "Please try again.");
+          }
+        },
+      },
     ]);
   };
 
-  const handleAccount = (account: FinanceAccount) => {
-    setSelectedAccount(account);
-    setAccountModalOpen(true);
+  const closeModal = () => {
+    setModalVisible(false);
+    setEditingAccount(null);
   };
 
-  const handleAddAccount = () => {
-    setSelectedAccount(null);
-    setAccountModalOpen(true);
+  const handleMadeDefault = async () => {
+    if (!editingAccount) return;
+    await setDefaultAccount(editingAccount.id);
+    closeModal();
   };
 
-  const handleCurrency = () => setPickerOpen(true);
-
-  const getAccountIcon = (type: FinanceAccount["type"]) => {
-    switch (type) {
-      case "CASH":
-        return "💵";
-      case "BANK":
-        return "🏦";
-      case "CREDIT_CARD":
-        return "💳";
-      case "SAVINGS":
-        return "🛡️";
-      default:
-        return "💰";
+  const handleCurrencySelect = async (selected: { code: string }) => {
+    setCurrencyPickerOpen(false);
+    if (!user) return;
+    try {
+      const { error } = await supabase
+        .from("users")
+        .update({ currency: selected.code })
+        .eq("clerk_id", user.id);
+      if (error) throw error;
+      setCurrency(selected.code);
+    } catch (error) {
+      Alert.alert("Error", error instanceof Error ? error.message : "Couldn't update your currency.");
     }
   };
 
   return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: "#F7F6F0",
-      }}
-    >
+    <SafeAreaView className="flex-1 bg-brand-body" edges={["top"]}>
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{
-          paddingBottom: 100,
-        }}
+        contentContainerStyle={{ paddingBottom: 100 }}
       >
-        {/* Header */}
-
-        <View
-          style={{
-            paddingHorizontal: 20,
-            paddingTop: 24,
-            paddingBottom: 10,
-          }}
-        >
-          <Text
-            style={{
-              color: "#1A1D26",
-              fontSize: 22,
-              fontWeight: "600",
-            }}
-          >
-            Profile
-          </Text>
+        <View className="px-5 pt-3 pb-2">
+          <Text className="text-brand-bg text-xl font-semibold">Profile</Text>
         </View>
 
-        {/* User Card */}
-
-        <View
-          style={{
-            marginHorizontal: 20,
-            marginTop: 8,
-            backgroundColor: "#1A1D26",
-            borderRadius: 18,
-            paddingHorizontal: 20,
-            paddingVertical: 24,
-            alignItems: "center",
-          }}
-        >
+        {/* User card */}
+        <View className="mx-5 mt-2 bg-brand-bg rounded-2xl px-5 py-6 items-center">
           <TouchableOpacity
-            onPress={handleAvatar}
+            onPress={handlePickAvatar}
             disabled={uploadingAvatar}
-            style={{
-              width: 80,
-              height: 80,
-              borderRadius: 40,
-              backgroundColor: "#2A2E3A",
-              alignItems: "center",
-              justifyContent: "center",
-              overflow: "hidden",
-            }}
+            activeOpacity={0.8}
+            className="w-20 h-20 rounded-full bg-[#1A1D26] items-center justify-center overflow-hidden border-2 border-[#2A2E3A]"
           >
             {uploadingAvatar ? (
-              <ActivityIndicator color="#FFFFFF" />
+              <ActivityIndicator color="#8A8D96" />
+            ) : user?.imageUrl && user.hasImage ? (
+              <Image
+                source={{ uri: user.imageUrl }}
+                style={{ width: 80, height: 80 }}
+                contentFit="cover"
+              />
             ) : (
-              <Text style={{ fontSize: 32 }}>👤</Text>
+              <Feather name="user" size={30} color="#8A8D96" />
             )}
+            <View className="absolute bottom-0 inset-x-0 h-6 bg-black/50 items-center justify-center">
+              <Feather name="camera" size={13} color="#F2EFE9" />
+            </View>
           </TouchableOpacity>
 
-          <Text
-            style={{
-              color: "#FFFFFF",
-              fontSize: 24,
-              fontWeight: "700",
-              marginTop: 14,
-            }}
-          >
-            {user?.firstName ?? ""} {user?.lastName ?? ""}
+          <Text className="text-white text-2xl font-bold mt-3.5">
+            {user?.firstName} {user?.lastName}
           </Text>
-
-          <Text
-            style={{
-              color: "#8A8D96",
-              fontSize: 12,
-              marginTop: 5,
-            }}
-          >
-            ✉ {user?.primaryEmailAddress?.emailAddress ?? ""}
-          </Text>
+          <View className="flex-row items-center gap-1.5 mt-1">
+            <Feather name="mail" size={11} color="#8A8D96" />
+            <Text
+              className="text-brand-text-secondary text-xs"
+              numberOfLines={1}
+            >
+              {user?.emailAddresses?.[0]?.emailAddress}
+            </Text>
+          </View>
         </View>
 
         {/* Accounts */}
-
         <SectionLabel>Accounts</SectionLabel>
-
-        <View
-          style={{
-            marginHorizontal: 20,
-            borderRadius: 16,
-            overflow: "hidden",
-            borderWidth: 1,
-            borderColor: "#E8E6DF",
-          }}
-        >
-          {accounts.map((account) => (
-            <Row
-              key={account.id}
-              icon={getAccountIcon(account.type)}
-              label={
-                account.name +
-                (account.is_default ? " (default)" : "")
-              }
-              value={formatPrice(account.balance)}
-              onPress={() => handleAccount(account)}
-            />
-          ))}
-
+        <View className="mx-5 rounded-2xl overflow-hidden border border-[#E8E6DF]">
+          {loadingAccounts ? (
+            <View className="bg-white px-4 py-5 items-center">
+              <ActivityIndicator color="#5C5F68" />
+            </View>
+          ) : accountsError ? (
+            <View className="bg-white px-4 py-5 items-center">
+              <Text className="text-brand-text-muted text-xs">
+                Couldn&apos;t load your accounts.
+              </Text>
+            </View>
+          ) : (
+            accounts.map((account) => (
+              <Row
+                key={account.id}
+                icon={ACCOUNT_ICON[account.type]}
+                label={account.name + (account.is_default ? " (default)" : "")}
+                value={formatPrice(account.balance, currency)}
+                onPress={() => {
+                  setEditingAccount(account);
+                  setModalVisible(true);
+                }}
+              />
+            ))
+          )}
           <Row
-            icon="+"
+            icon="plus"
             label="Add account"
-            onPress={handleAddAccount}
+            onPress={() => {
+              setEditingAccount(null);
+              setModalVisible(true);
+            }}
           />
         </View>
 
         {/* Preferences */}
-
         <SectionLabel>Preferences</SectionLabel>
-
-        <View
-          style={{
-            marginHorizontal: 20,
-            borderRadius: 16,
-            overflow: "hidden",
-            borderWidth: 1,
-            borderColor: "#E8E6DF",
-          }}
-        >
+        <View className="mx-5 rounded-2xl overflow-hidden border border-[#E8E6DF]">
           <Row
-            icon="💲"
+            icon="dollar-sign"
             label="Currency"
             value={currency}
-            onPress={handleCurrency}
+            onPress={() => setCurrencyPickerOpen(true)}
           />
 
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              backgroundColor: "#FFFFFF",
-              paddingHorizontal: 16,
-              paddingVertical: 14,
-            }}
-          >
-            <View
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 16,
-                backgroundColor: "#F5F4F0",
-                alignItems: "center",
-                justifyContent: "center",
-                marginRight: 12,
-              }}
-            >
-              <Text>🔒</Text>
+          <View className="flex-row items-center bg-white px-4 py-3.5">
+            <View className="w-8 h-8 rounded-full bg-[#F5F4F0] items-center justify-center mr-3">
+              <Feather name="lock" size={15} color="#5C5F68" />
             </View>
-
-            <Text
-              style={{
-                flex: 1,
-                fontSize: 14,
-                color: "#1A1D26",
-              }}
-            >
-              Biometric lock
-            </Text>
-
-            <Switch
-              value={biometricLock}
-              onValueChange={setBiometricLock}
-            />
+            <Text className="flex-1 text-sm text-brand-bg">Biometric lock</Text>
+            <Switch value={biometricLock} onValueChange={setBiometricLock} />
           </View>
         </View>
 
-        {/* Account */}
-
+        {/* Account actions */}
         <SectionLabel>Account</SectionLabel>
-
-        <View
-          style={{
-            marginHorizontal: 20,
-            borderRadius: 16,
-            overflow: "hidden",
-            borderWidth: 1,
-            borderColor: "#E8E6DF",
-          }}
-        >
+        <View className="mx-5 rounded-2xl overflow-hidden border border-[#E8E6DF]">
           <Row
-            icon="↪"
+            icon="log-out"
             label="Sign out"
             onPress={handleSignOut}
             showChevron={false}
@@ -373,40 +290,24 @@ export default function ProfileScreen() {
           />
         </View>
       </ScrollView>
+
+      {user && (
+        <AccountModal
+          visible={modalVisible}
+          account={editingAccount}
+          onClose={closeModal}
+          onSaved={closeModal}
+          onDeleted={closeModal}
+          onMadeDefault={handleMadeDefault}
+        />
+      )}
+
       <CurrencyPicker
-        visible={pickerOpen}
+        visible={currencyPickerOpen}
         selectedCode={currency}
-        onSelect={(selected) => {
-          setPickerOpen(false);
-          if (!user) return;
-          void (async () => {
-            try {
-              const { error } = await supabase.from("users").update({ currency: selected.code }).eq("clerk_id", user.id);
-              if (error) throw error;
-              setCurrency(selected.code);
-            } catch (error) {
-              Alert.alert("Currency update failed", error instanceof Error ? error.message : "Please try again.");
-            }
-          })();
-        }}
-        onClose={() => setPickerOpen(false)}
+        onSelect={handleCurrencySelect}
+        onClose={() => setCurrencyPickerOpen(false)}
       />
-      <AccountModal
-        visible={accountModalOpen}
-        account={selectedAccount}
-        onClose={() => setAccountModalOpen(false)}
-        onSaved={() => setAccountModalOpen(false)}
-        onDeleted={() => {
-          setAccountModalOpen(false);
-          setSelectedAccount(null);
-        }}
-        onMadeDefault={() => {
-          if (!selectedAccount) return;
-          void setDefaultMutation.mutateAsync(selectedAccount.id)
-            .then(() => setAccountModalOpen(false))
-            .catch((error) => Alert.alert("Update failed", error instanceof Error ? error.message : "Please try again."));
-        }}
-      />
-    </View>
+    </SafeAreaView>
   );
 }

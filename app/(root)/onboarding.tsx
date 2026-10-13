@@ -1,4 +1,5 @@
 import { ALL_CURRENCIES, CurrencyPicker, type CurrencyOption } from "@/components/CurrencyPicker";
+import { BrandLogo } from "@/components/BrandLogo";
 import { useSupabase } from "@/hooks/useSupabase";
 import { onboardingSchema } from "@/lib/schemas/onboarding";
 import { useUserStore } from "@/store/userStore";
@@ -8,7 +9,6 @@ import { router } from "expo-router";
 import { useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   Platform,
   Text,
@@ -106,11 +106,8 @@ export default function OnboardingScreen() {
         className="flex-1"
       >
         <View className="flex-1 justify-center px-6">
-          <View className="mb-10 flex-row items-center">
-            <View className="mr-3 h-12 w-12 items-center justify-center rounded-2xl bg-brand-bg">
-              <Text className="text-2xl font-extrabold text-white">W</Text>
-            </View>
-            <Text className="text-xl font-bold text-brand-bg">Welth</Text>
+          <View className="mb-10">
+            <BrandLogo width={230} height={84} />
           </View>
 
           <Text className="mb-2 text-3xl font-bold text-[#1A1D26]">

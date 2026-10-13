@@ -1,12 +1,15 @@
 import { useMemo, useState } from "react";
 import { Feather } from "@expo/vector-icons";
 import { useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
 import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useFinanceData } from "@/hooks/useFinanceData";
 import { useDeleteTransaction } from "@/hooks/mutations/useTransactionMutations";
 import { queryKeys } from "@/lib/query/keys";
 import { getCategoryConfig } from "@/constants/categories";
 import { exportTransactionsToCsv } from "@/lib/utils/exportTransactions";
+import { formatDate, formatPrice } from "@/lib/utils";
+import { useUserStore } from "@/store/userStore";
 import {
   ActivityIndicator,
   Alert,
@@ -32,45 +35,10 @@ type Transaction = {
   date: string;
 };
 
-type Account = {
-  id: string;
-  name: string;
-};
-
-const SAMPLE_ACCOUNTS: Account[] = [
-  { id: "1", name: "Cash" },
-  { id: "2", name: "Bank" },
-];
-
-const SAMPLE_TRANSACTIONS: Transaction[] = [
-  {
-    id: "1",
-    description: "Salary",
-    category: "Income",
-    type: "INCOME",
-    amount: 50000,
-    date: "2026-08-01",
-  },
-  {
-    id: "2",
-    description: "Groceries",
-    category: "Food",
-    type: "EXPENSE",
-    amount: 4500,
-    date: "2026-08-05",
-  },
-  {
-    id: "3",
-    description: "Electricity Bill",
-    category: "Bills",
-    type: "EXPENSE",
-    amount: 3200,
-    date: "2026-08-10",
-  },
-];
-
 export default function TransactionsScreen() {
   const { user, accounts: accountsQuery, transactions: transactionsQuery } = useFinanceData();
+  const router = useRouter();
+  const currency = useUserStore((state) => state.currency || "USD");
   const queryClient = useQueryClient();
   const deleteMutation = useDeleteTransaction();
   const transactions: Transaction[] = (transactionsQuery.data ?? []).map((tx) => ({
@@ -487,7 +455,7 @@ export default function TransactionsScreen() {
                     marginTop: 3,
                   }}
                 >
-                  {item.date}
+                  {formatDate(item.date)}
                 </Text>
               </View>
 
@@ -501,7 +469,7 @@ export default function TransactionsScreen() {
                   }}
                 >
                   {item.type === "INCOME" ? "+" : "-"}{" "}
-                  ₹{item.amount.toLocaleString("en-IN")}
+                  {formatPrice(item.amount, currency)}
                 </Text>
 
               </View>
@@ -534,7 +502,7 @@ export default function TransactionsScreen() {
       {/* Add Transaction Button */}
       <TouchableOpacity
         onPress={() =>
-          Alert.alert("Add Transaction", "Add transaction screen")
+          router.push("/(root)/(tabs)/add-transaction")
         }
         style={{
           position: "absolute",

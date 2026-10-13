@@ -1,4 +1,5 @@
 import { signInSchema, type SignInFormValues } from "@/lib/schemas/auth";
+import { BrandLogo } from "@/components/BrandLogo";
 import { Link } from "expo-router";
 import { useAuth, useSignIn } from "@clerk/expo";
 import { useState } from "react";
@@ -57,8 +58,11 @@ export default function SignInScreen() {
   return (
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} className="flex-1 bg-brand-body">
       <View className="flex-1 justify-center px-6">
+        <View className="mb-5">
+          <BrandLogo width={230} height={84} />
+        </View>
         <Text className="mb-2 text-3xl font-bold text-brand-bg">Welcome back</Text>
-        <Text className="mb-8 text-sm text-brand-text-muted">Sign in to continue to Welth.</Text>
+        <Text className="mb-8 text-sm text-brand-text-muted">Sign in to continue to ExpenseAi.</Text>
         <Text className="mb-2 text-sm font-medium text-brand-bg">Email</Text>
         <TextInput value={emailAddress} onChangeText={(value) => { setEmailAddress(value); setError(""); }} placeholder="Email address" placeholderTextColor="#8A8D96" autoCapitalize="none" autoCorrect={false} keyboardType="email-address" textContentType="emailAddress" className="mb-4 rounded-xl border border-[#E8E6DF] bg-white px-4 py-4 text-brand-bg" />
         <Text className="mb-2 text-sm font-medium text-brand-bg">Password</Text>
@@ -68,7 +72,7 @@ export default function SignInScreen() {
           {loading ? <ActivityIndicator color="#FFFFFF" /> : <Text className="font-semibold text-white">Sign in</Text>}
         </TouchableOpacity>
         <View className="mt-6 flex-row justify-center">
-          <Text className="text-sm text-brand-text-muted">New to Welth? </Text>
+          <Text className="text-sm text-brand-text-muted">New to ExpenseAi? </Text>
           <Link href="/" className="text-sm font-semibold text-brand-blue">Create an account</Link>
         </View>
       </View>
