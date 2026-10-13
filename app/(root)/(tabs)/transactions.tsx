@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
+import { Feather } from "@expo/vector-icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFinanceData } from "@/hooks/useFinanceData";
 import { queryKeys } from "@/lib/query/keys";
 import { deleteTransaction } from "@/lib/services/transactions";
 import { getCategoryConfig } from "@/constants/categories";
+import { exportTransactionsToCsv } from "@/lib/utils/exportTransactions";
 import {
   ActivityIndicator,
   Alert,
@@ -84,6 +86,55 @@ export default function TransactionsScreen() {
   const loading = accountsQuery.isLoading || transactionsQuery.isLoading;
   const [refreshing, setRefreshing] = useState(false);
   const accounts = accountsQuery.data ?? [];
+  const chartTransactions = transactions.filter((tx) => {
+    if (activeFilter === "Income" && tx.type !== "INCOME") return false;
+    if (activeFilter === "Expense" && tx.type !== "EXPENSE") return false;
+    if (activeAccountId && (transactionsQuery.data ?? []).find((row) => row.id === tx.id)?.account_id !== activeAccountId) return false;
+    return true;
+  });
+
+  const chartData = useMemo(() => {
+    const days = Array.from({ length: 14 }, (_, index) => {
+      const date = new Date();
+      date.setDate(date.getDate() - (13 - index));
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      const dayTransactions = chartTransactions.filter((tx) => tx.date.slice(0, 10) === key);
+      return {
+        label: `${date.getDate()}`,
+        income: dayTransactions.filter((tx) => tx.type === "INCOME").reduce((sum, tx) => sum + tx.amount, 0),
+        expense: dayTransactions.filter((tx) => tx.type === "EXPENSE").reduce((sum, tx) => sum + tx.amount, 0),
+      };
+    });
+    const peak = Math.max(1, ...days.flatMap((day) => [day.income, day.expense]));
+    return days.map((day) => ({ ...day, incomeHeight: day.income ? Math.max(5, (day.income / peak) * 150) : 0, expenseHeight: day.expense ? Math.max(5, (day.expense / peak) * 150) : 0 }));
+  }, [chartTransactions]);
+
+  const chartCard = (
+    <View style={{ backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#E8E6DF", borderRadius: 22, padding: 18, marginBottom: 16 }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+        <Text style={{ fontSize: 15, fontWeight: "600", color: "#1A1D26" }}>Daily income vs expense</Text>
+        <View style={{ flexDirection: "row", gap: 12 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}><View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#63D695" }} /><Text style={{ fontSize: 11, color: "#777B82" }}>Income</Text></View>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}><View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#C66F53" }} /><Text style={{ fontSize: 11, color: "#777B82" }}>Expense</Text></View>
+        </View>
+      </View>
+      <View style={{ height: 180, justifyContent: "flex-end" }}>
+        {[0, 1, 2].map((line) => <View key={line} style={{ position: "absolute", top: 8 + line * 50, left: 0, right: 0, borderTopWidth: 1, borderColor: "#F1F0ED", borderStyle: "dashed" }} />)}
+        <View style={{ height: 1, backgroundColor: "#E8E6DF" }} />
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", paddingHorizontal: 1 }}>
+          {chartData.map((day, index) => (
+            <View key={`${day.label}-${index}`} style={{ width: "6.8%", alignItems: "center" }}>
+              <View style={{ height: 154, flexDirection: "row", alignItems: "flex-end", gap: 2 }}>
+                <View style={{ width: 6, height: day.incomeHeight, backgroundColor: "#63D695", borderTopLeftRadius: 5, borderTopRightRadius: 5 }} />
+                <View style={{ width: 6, height: day.expenseHeight, backgroundColor: "#C66F53", borderTopLeftRadius: 5, borderTopRightRadius: 5 }} />
+              </View>
+              <Text style={{ color: "#9A9CA2", fontSize: 9, marginTop: 7 }}>{day.label}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
 
   const filteredTransactions = useMemo(() => {
     let result = transactions;
@@ -152,11 +203,23 @@ export default function TransactionsScreen() {
     );
   };
 
-  const handleExport = () => {
-    Alert.alert(
-      "Export",
-      `${filteredTransactions.length} transaction(s) ready to export.`
-    );
+  const handleExport = async () => {
+    if (filteredTransactions.length === 0) {
+      Alert.alert("Export transactions", "There are no transactions to export.");
+      return;
+    }
+
+    const visibleIds = new Set(filteredTransactions.map((transaction) => transaction.id));
+    const exportData = (transactionsQuery.data ?? []).filter((transaction) => visibleIds.has(transaction.id));
+
+    try {
+      const result = await exportTransactionsToCsv(exportData);
+      if (!result.shared) {
+        Alert.alert("CSV created", `${result.count} transaction(s) exported. Sharing is unavailable on this device.`);
+      }
+    } catch (error) {
+      Alert.alert("Export failed", error instanceof Error ? error.message : "Please try again.");
+    }
   };
 
   return (
@@ -194,7 +257,7 @@ export default function TransactionsScreen() {
               justifyContent: "center",
             }}
           >
-            <Text style={{ fontSize: 18 }}>↓</Text>
+            <Feather name="download" size={18} color="#1A1D26" />
           </TouchableOpacity>
         </View>
 
@@ -338,8 +401,9 @@ export default function TransactionsScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={{
             paddingHorizontal: 20,
-            paddingBottom: 100,
+            paddingBottom: 110,
           }}
+          ListHeaderComponent={chartCard}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -352,14 +416,20 @@ export default function TransactionsScreen() {
                 backgroundColor: "#FFFFFF",
                 borderWidth: 1,
                 borderColor: "#E8E6DF",
-                borderRadius: 14,
+                borderRadius: 20,
                 padding: 16,
-                marginBottom: 10,
+                marginBottom: 12,
+                minHeight: 90,
+                borderLeftWidth: 3,
+                borderLeftColor: item.type === "INCOME" ? "#8B5BB2" : "#72B9B1",
                 flexDirection: "row",
                 justifyContent: "space-between",
                 alignItems: "center",
               }}
             >
+              <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: item.type === "INCOME" ? "#F3ECF8" : "#EDF5F3", alignItems: "center", justifyContent: "center", marginRight: 12 }}>
+                <Feather name={item.type === "INCOME" ? "dollar-sign" : "shopping-bag"} size={20} color={item.type === "INCOME" ? "#8B5BB2" : "#68A9A2"} />
+              </View>
               <View style={{ flex: 1 }}>
                 <Text
                   style={{
@@ -374,7 +444,7 @@ export default function TransactionsScreen() {
                 <Text
                   style={{
                     fontSize: 12,
-                    color: "#8A8D96",
+                    color: item.type === "INCOME" ? "#8B5BB2" : "#68A9A2",
                     marginTop: 4,
                   }}
                 >
@@ -398,11 +468,11 @@ export default function TransactionsScreen() {
                     fontSize: 15,
                     fontWeight: "600",
                     color:
-                      item.type === "INCOME" ? "#3DDC84" : "#FF6B4A",
+                      item.type === "INCOME" ? "#63C98A" : "#B97460",
                   }}
                 >
                   {item.type === "INCOME" ? "+" : "-"}{" "}
-                  {item.amount.toLocaleString()}
+                  ₹{item.amount.toLocaleString("en-IN")}
                 </Text>
 
                 <TouchableOpacity
